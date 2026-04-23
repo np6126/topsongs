@@ -100,10 +100,29 @@ RUN_ON_STARTUP=false
 | `LIBRARY_PATH_ALLOWLIST` | no | empty | Comma-separated Jellyfin `Path` prefixes to include, for example `/music`. |
 | `LIBRARY_PATH_DENYLIST` | no | empty | Comma-separated Jellyfin `Path` prefixes to exclude. |
 | `PROJECT_ROOT` | no | `..` | Docker build context used by `appdata/docker-compose.yml`. |
-| `CRON_SCHEDULE` | no | `0 3 * * *` | Cron expression for scheduled container runs. |
+| `CRON_SCHEDULE` | no | `0 3 * * *` | Cron expression for scheduled container runs. The default runs daily at 03:00 in the container's local timezone. |
 | `RUN_ON_STARTUP` | no | `false` | Set to `true` to run once when the container starts. |
 
 Empty allowlist and denylist variables are valid and mean "no filter".
+
+Allowlist and denylist examples:
+
+```env
+ARTIST_ALLOWLIST=Powerwolf,Nightwish
+ARTIST_DENYLIST=Various Artists,Soundtrack
+USER_ALLOWLIST=alice,bob
+USER_DENYLIST=guest
+LIBRARY_PATH_ALLOWLIST=/music
+LIBRARY_PATH_DENYLIST=/music/podcasts,/music/audiobooks
+```
+
+Create API keys:
+
+- Jellyfin: sign in as an administrator, open the Jellyfin dashboard, then go to
+  `Advanced` > `API Keys` and create a new key for `topsongs`.
+- Last.fm: open the [Last.fm API page](https://www.last.fm/api), choose
+  `Get an API account`, create an API account, and copy the generated API key
+  into `LASTFM_API_KEY`.
 
 ## Docker Compose
 
