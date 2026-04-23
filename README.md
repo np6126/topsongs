@@ -71,6 +71,7 @@ LOG_LEVEL=INFO
 REQUEST_TIMEOUT_SECONDS=20
 REQUEST_MAX_RETRIES=2
 RETRY_BACKOFF_SECONDS=1.0
+MAX_PROVIDER_TRACKS=200
 ARTIST_ALLOWLIST=
 ARTIST_DENYLIST=
 USER_ALLOWLIST=
@@ -93,6 +94,7 @@ RUN_ON_STARTUP=false
 | `REQUEST_TIMEOUT_SECONDS` | no | `20` | HTTP timeout for Jellyfin and Last.fm requests. |
 | `REQUEST_MAX_RETRIES` | no | `2` | Retry count for retryable network and server errors. |
 | `RETRY_BACKOFF_SECONDS` | no | `1.0` | Base delay between retries. |
+| `MAX_PROVIDER_TRACKS` | no | `200` | Maximum Last.fm top tracks to fetch and consider per artist. |
 | `ARTIST_ALLOWLIST` | no | empty | Comma-separated artist names to include. Empty means all artists. |
 | `ARTIST_DENYLIST` | no | empty | Comma-separated artist names to exclude. |
 | `USER_ALLOWLIST` | no | empty | Comma-separated Jellyfin user names to include. Empty means all enabled users. |

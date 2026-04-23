@@ -7,7 +7,7 @@ import time
 import httpx
 
 from ..models import ProviderTrack
-from ..sanitize import MAX_PROVIDER_TRACKS, sanitize_untrusted_text
+from ..sanitize import sanitize_untrusted_text
 from .base import TopSongsProvider
 
 logger = logging.getLogger(__name__)
@@ -35,11 +35,13 @@ class LastFmProvider(TopSongsProvider):
         timeout_seconds: float = 20.0,
         max_retries: int = 2,
         retry_backoff_seconds: float = 1.0,
+        max_tracks: int = 200,
     ) -> None:
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
         self._retry_backoff_seconds = retry_backoff_seconds
+        self._max_tracks = max_tracks
 
     @property
     def name(self) -> str:
@@ -52,7 +54,7 @@ class LastFmProvider(TopSongsProvider):
             "api_key": self._api_key,
             "format": "json",
             "autocorrect": "1",
-            "limit": str(MAX_PROVIDER_TRACKS),
+            "limit": str(self._max_tracks),
         }
         payload = self._request_json(params, artist_name)
 
@@ -70,7 +72,7 @@ class LastFmProvider(TopSongsProvider):
             raise LastFmNoTopTracksError(f"artist={artist_name} message=no_top_tracks")
 
         results: list[ProviderTrack] = []
-        for entry in tracks[:MAX_PROVIDER_TRACKS]:
+        for entry in tracks[: self._max_tracks]:
             title = sanitize_untrusted_text(str(entry.get("name", "")).strip())
             if not title:
                 continue

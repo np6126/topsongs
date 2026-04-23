@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-MAX_PROVIDER_TRACKS = 200
 MAX_TITLE_LENGTH = 200
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
