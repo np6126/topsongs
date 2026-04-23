@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from topsongs.filters import LibraryPathFilter
 from topsongs.models import (
     JellyfinArtist,
     JellyfinTrack,
@@ -21,9 +22,12 @@ class SettingsStub:
     min_tracks_per_artist = 10
 
 
-class PlannerPathFilterTests(unittest.TestCase):
+class LibraryPathFilterTests(unittest.TestCase):
     def test_filters_tracks_by_path_prefix(self) -> None:
-        planner = Planner(SettingsStub(), jellyfin=None, provider=None)
+        path_filter = LibraryPathFilter(
+            allowlist=SettingsStub.library_path_allowlist,
+            denylist=SettingsStub.library_path_denylist,
+        )
         tracks = [
             JellyfinTrack(id="1", name="song1", path="/music/metal/song1.flac"),
             JellyfinTrack(id="2", name="song2", path="/music/podcasts/episode1.mp3"),
@@ -31,16 +35,19 @@ class PlannerPathFilterTests(unittest.TestCase):
             JellyfinTrack(id="4", name="song4", path=None),
         ]
 
-        filtered = planner._filter_tracks_by_library_path(tracks)
+        filtered = path_filter.filter_tracks(tracks)
 
         self.assertEqual([track.id for track in filtered], ["1"])
 
     def test_path_matching_handles_case_and_boundaries(self) -> None:
-        planner = Planner(SettingsStub(), jellyfin=None, provider=None)
+        path_filter = LibraryPathFilter(
+            allowlist=SettingsStub.library_path_allowlist,
+            denylist=SettingsStub.library_path_denylist,
+        )
 
-        self.assertTrue(planner._path_is_selected("/music/artist/song.mp3"))
-        self.assertFalse(planner._path_is_selected("/musicbox/artist/song.mp3"))
-        self.assertFalse(planner._path_is_selected("/music/podcasts/episode.mp3"))
+        self.assertTrue(path_filter.matches("/music/artist/song.mp3"))
+        self.assertFalse(path_filter.matches("/musicbox/artist/song.mp3"))
+        self.assertFalse(path_filter.matches("/music/podcasts/episode.mp3"))
 
     def test_logs_human_readable_playlist_tracks(self) -> None:
         planner = Planner(SettingsStub(), jellyfin=None, provider=None)
