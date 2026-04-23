@@ -33,8 +33,10 @@ def acquire_run_lock(state_dir: Path):
         fd = None
         acquired = True
         yield lock_path
-    except FileExistsError:
-        raise RunAlreadyActiveError(f"Another run is already active: lock_path={lock_path}")
+    except FileExistsError as exc:
+        raise RunAlreadyActiveError(
+            f"Another run is already active: lock_path={lock_path}"
+        ) from exc
     finally:
         if fd is not None:
             os.close(fd)
@@ -77,7 +79,8 @@ def main() -> int:
 
     logger.info("event=finish last_run_path=%s", last_run_path)
     logger.info(
-        "event=summary users_seen=%s targeted_users=%s artists_seen=%s eligible=%s created=%s replaced=%s failed_users=%s failed_artists=%s",
+        "event=summary users_seen=%s targeted_users=%s artists_seen=%s eligible=%s "
+        "created=%s replaced=%s failed_users=%s failed_artists=%s",
         report.user_count_seen,
         report.targeted_user_count,
         report.artist_count_seen,

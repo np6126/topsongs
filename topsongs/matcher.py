@@ -6,7 +6,10 @@ from .models import JellyfinTrack, ProviderTrack, TrackMatch
 from .normalize import normalize_name
 
 
-def match_tracks(provider_tracks: Iterable[ProviderTrack], local_tracks: Iterable[JellyfinTrack]) -> tuple[list[TrackMatch], list[str]]:
+def match_tracks(
+    provider_tracks: Iterable[ProviderTrack],
+    local_tracks: Iterable[JellyfinTrack],
+) -> tuple[list[TrackMatch], list[str]]:
     local_by_exact: dict[str, JellyfinTrack] = {}
     local_by_normalized: dict[str, JellyfinTrack] = {}
 
