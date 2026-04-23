@@ -6,7 +6,13 @@ from urllib.parse import urlencode
 
 import httpx
 
-from .models import JellyfinArtist, JellyfinPlaylist, JellyfinTrack, JellyfinUser, JellyfinUserPolicy
+from .models import (
+    JellyfinArtist,
+    JellyfinPlaylist,
+    JellyfinTrack,
+    JellyfinUser,
+    JellyfinUserPolicy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +41,11 @@ class JellyfinClient:
 
     def get_users(self) -> list[JellyfinUser]:
         payload = self._get("/Users", params={})
-        return [self._user_from_item(item) for item in payload if item.get("Id") and item.get("Name")]
+        return [
+            self._user_from_item(item)
+            for item in payload
+            if item.get("Id") and item.get("Name")
+        ]
 
     def get_artists(self, user_id: str) -> list[JellyfinArtist]:
         params = {
@@ -66,7 +76,11 @@ class JellyfinClient:
         }
         payload = self._get(f"/Users/{user_id}/Items", params=params)
         tracks = payload.get("Items", [])
-        return [self._track_from_item(item) for item in tracks if item.get("Id") and item.get("Name")]
+        return [
+            self._track_from_item(item)
+            for item in tracks
+            if item.get("Id") and item.get("Name")
+        ]
 
     def get_playlists_for_user(self, user_id: str) -> list[JellyfinPlaylist]:
         params = {
@@ -127,7 +141,10 @@ class JellyfinClient:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                with httpx.Client(timeout=self.timeout_seconds, headers=self.default_headers) as client:
+                with httpx.Client(
+                    timeout=self.timeout_seconds,
+                    headers=self.default_headers,
+                ) as client:
                     response = client.request(method, url, params=params)
                     response.raise_for_status()
                     return response
@@ -146,7 +163,10 @@ class JellyfinClient:
                     break
                 time.sleep(self.retry_backoff_seconds * (attempt + 1))
 
-        raise RuntimeError(f"service=jellyfin method={method} url={url} message=request_failed error={last_error}")
+        raise RuntimeError(
+            f"service=jellyfin method={method} url={url} "
+            f"message=request_failed error={last_error}"
+        )
 
     @staticmethod
     def _user_from_item(item: dict) -> JellyfinUser:

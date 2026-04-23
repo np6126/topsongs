@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Any
 
 from .config import Settings
 from .jellyfin import JellyfinClient
@@ -15,25 +14,36 @@ from .models import (
     JellyfinUser,
     PlannedPlaylistTrack,
     PlaylistPlan,
+    ProviderTrack,
     RunReport,
+    TrackMatch,
     UserPlan,
 )
 from .normalize import normalize_name
-from .providers.lastfm import LastFmError, LastFmNoTopTracksError, LastFmRateLimitError
 from .providers.base import TopSongsProvider
+from .providers.lastfm import LastFmError, LastFmNoTopTracksError, LastFmRateLimitError
 from .sanitize import sanitize_untrusted_text
 
 logger = logging.getLogger(__name__)
 
 
 class Planner:
-    def __init__(self, settings: Settings, jellyfin: JellyfinClient, provider: TopSongsProvider) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        jellyfin: JellyfinClient,
+        provider: TopSongsProvider,
+    ) -> None:
         self.settings = settings
         self.jellyfin = jellyfin
         self.provider = provider
-        self._library_path_allowlist = [self._normalize_path_prefix(item) for item in settings.library_path_allowlist]
-        self._library_path_denylist = [self._normalize_path_prefix(item) for item in settings.library_path_denylist]
-        self._provider_track_cache: dict[str, Any] = {}
+        self._library_path_allowlist = [
+            self._normalize_path_prefix(item) for item in settings.library_path_allowlist
+        ]
+        self._library_path_denylist = [
+            self._normalize_path_prefix(item) for item in settings.library_path_denylist
+        ]
+        self._provider_track_cache: dict[str, list[ProviderTrack] | Exception] = {}
 
     def run(self) -> RunReport:
         started_at = datetime.now(timezone.utc)
@@ -48,33 +58,29 @@ class Planner:
         total_failed_artist_count = 0
 
         for user in targeted_users:
-            logger.info("event=user_start user=%s user_id=%s", sanitize_untrusted_text(user.name), user.id)
+            logger.info(
+                "event=user_start user=%s user_id=%s",
+                sanitize_untrusted_text(user.name),
+                user.id,
+            )
             try:
                 user_plan = self._plan_for_user(user)
             except Exception as exc:
                 total_failed_user_count += 1
-                logger.exception("event=user_failed user=%s user_id=%s error=%s", sanitize_untrusted_text(user.name), user.id, exc)
-                user_plan = UserPlan(
-                    user_id=user.id,
-                    user_name=user.name,
-                    is_administrator=user.policy.is_administrator,
-                    artist_count_seen=0,
-                    eligible_artist_count=0,
-                    planned_playlist_count=0,
-                    failed_artist_count=0,
-                    notes=["User processing failed before artist iteration completed."],
-                    error=str(exc),
+                logger.exception(
+                    "event=user_failed user=%s user_id=%s error=%s",
+                    sanitize_untrusted_text(user.name),
+                    user.id,
+                    exc,
                 )
+                user_plan = self._failed_user_plan(user, exc)
             user_plans.append(user_plan)
             total_artist_count += user_plan.artist_count_seen
             total_eligible_count += user_plan.eligible_artist_count
             total_failed_artist_count += user_plan.failed_artist_count
-            total_created_count += sum(
-                1 for artist_plan in user_plan.artists if artist_plan.playlist_plan and artist_plan.playlist_plan.action == "created"
-            )
-            total_replaced_count += sum(
-                1 for artist_plan in user_plan.artists if artist_plan.playlist_plan and artist_plan.playlist_plan.action == "replaced"
-            )
+            created_count, replaced_count = self._count_playlist_actions(user_plan)
+            total_created_count += created_count
+            total_replaced_count += replaced_count
 
         finished_at = datetime.now(timezone.utc)
         return RunReport(
@@ -91,6 +97,34 @@ class Planner:
             failed_artist_count=total_failed_artist_count,
             users=user_plans,
         )
+
+    @staticmethod
+    def _failed_user_plan(user: JellyfinUser, exc: Exception) -> UserPlan:
+        return UserPlan(
+            user_id=user.id,
+            user_name=user.name,
+            is_administrator=user.policy.is_administrator,
+            artist_count_seen=0,
+            eligible_artist_count=0,
+            planned_playlist_count=0,
+            failed_artist_count=0,
+            notes=["User processing failed before artist iteration completed."],
+            error=str(exc),
+        )
+
+    @staticmethod
+    def _count_playlist_actions(user_plan: UserPlan) -> tuple[int, int]:
+        created_count = 0
+        replaced_count = 0
+        for artist_plan in user_plan.artists:
+            playlist_plan = artist_plan.playlist_plan
+            if playlist_plan is None:
+                continue
+            if playlist_plan.action == "created":
+                created_count += 1
+            if playlist_plan.action == "replaced":
+                replaced_count += 1
+        return created_count, replaced_count
 
     def _artist_is_selected(self, artist_name: str) -> bool:
         normalized = normalize_name(artist_name)
@@ -124,7 +158,10 @@ class Planner:
 
     def _plan_for_user(self, user: JellyfinUser) -> UserPlan:
         artists = self.jellyfin.get_artists(user.id)
-        existing_playlists = {playlist.name: playlist for playlist in self.jellyfin.get_playlists_for_user(user.id)}
+        existing_playlists = {
+            playlist.name: playlist
+            for playlist in self.jellyfin.get_playlists_for_user(user.id)
+        }
         eligible_count = 0
         planned_count = 0
         failed_artist_count = 0
@@ -143,14 +180,7 @@ class Planner:
                     sanitize_untrusted_text(artist.name),
                     exc,
                 )
-                plan = ArtistPlan(
-                    artist=artist.name,
-                    local_track_count=0,
-                    eligible=False,
-                    provider=self.provider.name,
-                    notes=["Artist processing failed."],
-                    error=str(exc),
-                )
+                plan = self._failed_artist_plan(artist.name, exc)
 
             if plan.eligible:
                 eligible_count += 1
@@ -180,16 +210,12 @@ class Planner:
         filtered_out_count = len(all_local_tracks) - len(local_tracks)
         local_count = len(local_tracks)
         eligible = local_count > self.settings.min_tracks_per_artist
-        plan = ArtistPlan(
-            artist=artist.name,
-            local_track_count=local_count,
-            eligible=eligible,
-            provider=self.provider.name,
-        )
+        plan = self._initial_artist_plan(artist.name, local_count, eligible)
 
         if filtered_out_count:
             plan.notes.append(
-                f"Excluded {filtered_out_count} local tracks because they do not match the configured library path filters."
+                f"Excluded {filtered_out_count} local tracks because they do not match "
+                "the configured library path filters."
             )
             logger.info(
                 "event=library_filtered user=%s artist=%s skipped_tracks=%s",
@@ -200,7 +226,8 @@ class Planner:
 
         if not eligible:
             plan.notes.append(
-                f"Skipped because local track count {local_count} is not greater than threshold {self.settings.min_tracks_per_artist}."
+                f"Skipped because local track count {local_count} is not greater than "
+                f"threshold {self.settings.min_tracks_per_artist}."
             )
             return plan
 
@@ -216,11 +243,13 @@ class Planner:
             return plan
         except LastFmRateLimitError as exc:
             raise RuntimeError(
-                f"provider=lastfm rate_limited user={sanitize_untrusted_text(user.name)} artist={sanitize_untrusted_text(artist.name)} error={exc}"
+                f"provider=lastfm rate_limited user={sanitize_untrusted_text(user.name)} "
+                f"artist={sanitize_untrusted_text(artist.name)} error={exc}"
             ) from exc
         except LastFmError as exc:
             raise RuntimeError(
-                f"provider=lastfm request_failed user={sanitize_untrusted_text(user.name)} artist={sanitize_untrusted_text(artist.name)} error={exc}"
+                f"provider=lastfm request_failed user={sanitize_untrusted_text(user.name)} "
+                f"artist={sanitize_untrusted_text(artist.name)} error={exc}"
             ) from exc
 
         plan.provider_tracks = provider_tracks
@@ -230,64 +259,21 @@ class Planner:
         plan.unmatched_tracks = unmatched
 
         if matches:
-            playlist_name = f"Top Songs - {artist.name}"
-            item_ids = [match.jellyfin_item_id for match in matches]
-            planned_tracks = [
-                PlannedPlaylistTrack(
-                    rank=index,
-                    provider_title=match.provider_title,
-                    jellyfin_title=match.jellyfin_title,
-                    jellyfin_item_id=match.jellyfin_item_id,
-                    match_type=match.match_type,
-                    album=match.album,
-                )
-                for index, match in enumerate(matches, start=1)
-            ]
-            existing_playlist = existing_playlists.get(playlist_name)
-            created_playlist_id = self.jellyfin.create_playlist(user.id, playlist_name, item_ids)
-            deleted_playlist_id = None
-            action = "created"
-
-            if existing_playlist is not None:
-                action = "replaced"
-                deleted_playlist_id = existing_playlist.id
-                try:
-                    self.jellyfin.delete_playlist(existing_playlist.id)
-                    logger.info(
-                        "event=playlist_deleted user=%s playlist=%s playlist_id=%s",
-                        sanitize_untrusted_text(user.name),
-                        sanitize_untrusted_text(playlist_name),
-                        existing_playlist.id,
-                    )
-                except Exception as exc:
-                    plan.notes.append(
-                        f"Created replacement playlist {created_playlist_id}, but failed to delete previous playlist {existing_playlist.id}: {exc}"
-                    )
-                    logger.exception(
-                        "event=playlist_delete_failed user=%s playlist=%s old_id=%s error=%s",
-                        sanitize_untrusted_text(user.name),
-                        sanitize_untrusted_text(playlist_name),
-                        existing_playlist.id,
-                        exc,
-                    )
-
-            plan.playlist_plan = PlaylistPlan(
-                user_id=user.id,
-                user_name=user.name,
-                playlist_name=playlist_name,
-                action=action,
-                planned_item_ids=item_ids,
-                planned_tracks=planned_tracks,
-                deleted_playlist_id=deleted_playlist_id,
-                created_playlist_id=created_playlist_id,
+            plan.playlist_plan = self._apply_playlist_plan(
+                user=user,
+                artist_name=artist.name,
+                matches=matches,
+                existing_playlists=existing_playlists,
+                notes=plan.notes,
             )
-            existing_playlists[playlist_name] = JellyfinPlaylist(id=created_playlist_id, name=playlist_name)
-            self._log_applied_playlist(user.name, playlist_name, action, created_playlist_id, planned_tracks)
         else:
-            plan.notes.append("No playlist planned because no provider tracks could be matched locally.")
+            plan.notes.append(
+                "No playlist planned because no provider tracks could be matched locally."
+            )
 
         logger.info(
-            "event=artist_done user=%s artist=%s local=%s provider_tracks=%s matched=%s unmatched=%s applied=%s",
+            "event=artist_done user=%s artist=%s local=%s provider_tracks=%s "
+            "matched=%s unmatched=%s applied=%s",
             sanitize_untrusted_text(user.name),
             sanitize_untrusted_text(artist.name),
             local_count,
@@ -298,13 +284,120 @@ class Planner:
         )
         return plan
 
-    def _get_provider_tracks(self, artist_name: str):
+    def _initial_artist_plan(
+        self,
+        artist_name: str,
+        local_track_count: int,
+        eligible: bool,
+    ) -> ArtistPlan:
+        return ArtistPlan(
+            artist=artist_name,
+            local_track_count=local_track_count,
+            eligible=eligible,
+            provider=self.provider.name,
+        )
+
+    def _failed_artist_plan(self, artist_name: str, exc: Exception) -> ArtistPlan:
+        return ArtistPlan(
+            artist=artist_name,
+            local_track_count=0,
+            eligible=False,
+            provider=self.provider.name,
+            notes=["Artist processing failed."],
+            error=str(exc),
+        )
+
+    @staticmethod
+    def _playlist_name(artist_name: str) -> str:
+        return f"Top Songs - {artist_name}"
+
+    @staticmethod
+    def _build_planned_tracks(matches: list[TrackMatch]) -> list[PlannedPlaylistTrack]:
+        return [
+            PlannedPlaylistTrack(
+                rank=index,
+                provider_title=match.provider_title,
+                jellyfin_title=match.jellyfin_title,
+                jellyfin_item_id=match.jellyfin_item_id,
+                match_type=match.match_type,
+                album=match.album,
+            )
+            for index, match in enumerate(matches, start=1)
+        ]
+
+    def _apply_playlist_plan(
+        self,
+        user: JellyfinUser,
+        artist_name: str,
+        matches: list[TrackMatch],
+        existing_playlists: dict[str, JellyfinPlaylist],
+        notes: list[str],
+    ) -> PlaylistPlan:
+        playlist_name = self._playlist_name(artist_name)
+        item_ids = [match.jellyfin_item_id for match in matches]
+        planned_tracks = self._build_planned_tracks(matches)
+        existing_playlist = existing_playlists.get(playlist_name)
+        created_playlist_id = self.jellyfin.create_playlist(user.id, playlist_name, item_ids)
+        deleted_playlist_id = None
+        action = "created"
+
+        if existing_playlist is not None:
+            action = "replaced"
+            deleted_playlist_id = existing_playlist.id
+            try:
+                self.jellyfin.delete_playlist(existing_playlist.id)
+                logger.info(
+                    "event=playlist_deleted user=%s playlist=%s playlist_id=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(playlist_name),
+                    existing_playlist.id,
+                )
+            except Exception as exc:
+                notes.append(
+                    f"Created replacement playlist {created_playlist_id}, but failed "
+                    f"to delete previous playlist {existing_playlist.id}: {exc}"
+                )
+                logger.exception(
+                    "event=playlist_delete_failed user=%s playlist=%s old_id=%s error=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(playlist_name),
+                    existing_playlist.id,
+                    exc,
+                )
+
+        playlist_plan = PlaylistPlan(
+            user_id=user.id,
+            user_name=user.name,
+            playlist_name=playlist_name,
+            action=action,
+            planned_item_ids=item_ids,
+            planned_tracks=planned_tracks,
+            deleted_playlist_id=deleted_playlist_id,
+            created_playlist_id=created_playlist_id,
+        )
+        existing_playlists[playlist_name] = JellyfinPlaylist(
+            id=created_playlist_id,
+            name=playlist_name,
+        )
+        self._log_applied_playlist(
+            user.name,
+            playlist_name,
+            action,
+            created_playlist_id,
+            planned_tracks,
+        )
+        return playlist_plan
+
+    def _get_provider_tracks(self, artist_name: str) -> list[ProviderTrack]:
         cache_key = normalize_name(artist_name)
         cached = self._provider_track_cache.get(cache_key)
         if isinstance(cached, Exception):
             raise cached
         if cached is not None:
-            logger.debug("event=provider_cache_hit provider=lastfm artist=%s", sanitize_untrusted_text(artist_name))
+            logger.debug(
+                "event=provider_cache_hit provider=lastfm artist=%s",
+                sanitize_untrusted_text(artist_name),
+            )
             return cached
 
         try:
@@ -316,7 +409,10 @@ class Planner:
         self._provider_track_cache[cache_key] = provider_tracks
         return provider_tracks
 
-    def _filter_tracks_by_library_path(self, tracks: Iterable[JellyfinTrack]) -> list[JellyfinTrack]:
+    def _filter_tracks_by_library_path(
+        self,
+        tracks: Iterable[JellyfinTrack],
+    ) -> list[JellyfinTrack]:
         filtered: list[JellyfinTrack] = []
         for track in tracks:
             normalized_path = self._normalize_track_path(track.path)
@@ -329,12 +425,16 @@ class Planner:
         if self._library_path_allowlist:
             if normalized_path is None:
                 return False
-            if not any(self._path_matches_prefix(normalized_path, prefix) for prefix in self._library_path_allowlist):
+            if not any(
+                self._path_matches_prefix(normalized_path, prefix)
+                for prefix in self._library_path_allowlist
+            ):
                 return False
 
         if self._library_path_denylist:
             if normalized_path is not None and any(
-                self._path_matches_prefix(normalized_path, prefix) for prefix in self._library_path_denylist
+                self._path_matches_prefix(normalized_path, prefix)
+                for prefix in self._library_path_denylist
             ):
                 return False
 

@@ -85,7 +85,11 @@ class LastFmProvider(TopSongsProvider):
                 )
             )
 
-        logger.debug("provider=lastfm artist=%s returned_tracks=%s", sanitize_untrusted_text(artist_name), len(results))
+        logger.debug(
+            "provider=lastfm artist=%s returned_tracks=%s",
+            sanitize_untrusted_text(artist_name),
+            len(results),
+        )
         return results
 
     def _request_json(self, params: dict[str, str], artist_name: str) -> dict:
@@ -115,7 +119,10 @@ class LastFmProvider(TopSongsProvider):
                     break
                 time.sleep(self._retry_backoff_seconds * (attempt + 1))
 
-        raise LastFmError(f"artist={sanitize_untrusted_text(artist_name)} message=request_failed error={last_error}")
+        raise LastFmError(
+            f"artist={sanitize_untrusted_text(artist_name)} "
+            f"message=request_failed error={last_error}"
+        )
 
 
 def _to_int(value: object) -> int | None:

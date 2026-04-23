@@ -1,7 +1,13 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from topsongs.models import JellyfinArtist, JellyfinTrack, JellyfinUser, JellyfinUserPolicy, ProviderTrack
+from topsongs.models import (
+    JellyfinArtist,
+    JellyfinTrack,
+    JellyfinUser,
+    JellyfinUserPolicy,
+    ProviderTrack,
+)
 from topsongs.planner import Planner
 
 
@@ -38,10 +44,7 @@ class PlannerPathFilterTests(unittest.TestCase):
 
     def test_logs_human_readable_playlist_tracks(self) -> None:
         planner = Planner(SettingsStub(), jellyfin=None, provider=None)
-        logger = MagicMock()
-        original_logger = __import__("topsongs.planner", fromlist=["logger"]).logger
-        __import__("topsongs.planner", fromlist=["logger"]).logger = logger
-        try:
+        with patch("topsongs.planner.logger") as logger:
             planner._log_applied_playlist(
                 "jaji",
                 "Top Songs - Powerwolf",
@@ -72,14 +75,16 @@ class PlannerPathFilterTests(unittest.TestCase):
                     )(),
                 ],
             )
-        finally:
-            __import__("topsongs.planner", fromlist=["logger"]).logger = original_logger
 
         messages = [call.args[0] for call in logger.info.call_args_list]
-        self.assertIn("Applied playlist for user=%s: %s action=%s playlist_id=%s (%s tracks)", messages[0])
+        self.assertIn(
+            "event=playlist_applied user=%s playlist=%s action=%s playlist_id=%s track_count=%s",
+            messages[0],
+        )
         self.assertIn("  1. Army of the Night [exact] (Blessed & Possessed)", messages[1])
         self.assertIn(
-            "  2. We Drink Your Blood <- We Drink Your Blood - Remastered 2018 [normalized] (Preachers of the Night)",
+            "  2. We Drink Your Blood <- We Drink Your Blood - Remastered 2018 "
+            "[normalized] (Preachers of the Night)",
             messages[2],
         )
 
@@ -105,7 +110,9 @@ class PlannerPathFilterTests(unittest.TestCase):
             def get_tracks_for_artist(self, user_id, artist):
                 raise RuntimeError("track lookup failed")
 
-        planner = Planner(SettingsStub(), jellyfin=JellyfinStub(), provider=MagicMock())
+        provider = MagicMock()
+        provider.name = "lastfm"
+        planner = Planner(SettingsStub(), jellyfin=JellyfinStub(), provider=provider)
         user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
 
         user_plan = planner._plan_for_user(user)
