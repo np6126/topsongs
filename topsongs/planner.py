@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from .config import Settings
+from .filters import LibraryPathFilter, NameFilter, UserFilter
 from .jellyfin import JellyfinClient
 from .matcher import match_tracks
 from .models import (
     ArtistPlan,
     JellyfinPlaylist,
-    JellyfinTrack,
     JellyfinUser,
     PlannedPlaylistTrack,
     PlaylistPlan,
@@ -37,18 +36,18 @@ class Planner:
         self.settings = settings
         self.jellyfin = jellyfin
         self.provider = provider
-        self._library_path_allowlist = [
-            self._normalize_path_prefix(item) for item in settings.library_path_allowlist
-        ]
-        self._library_path_denylist = [
-            self._normalize_path_prefix(item) for item in settings.library_path_denylist
-        ]
+        self._artist_filter = NameFilter(settings.artist_allowlist, settings.artist_denylist)
+        self._user_filter = UserFilter(settings.user_allowlist, settings.user_denylist)
+        self._library_path_filter = LibraryPathFilter(
+            settings.library_path_allowlist,
+            settings.library_path_denylist,
+        )
         self._provider_track_cache: dict[str, list[ProviderTrack] | Exception] = {}
 
     def run(self) -> RunReport:
         started_at = datetime.now(timezone.utc)
         users = self.jellyfin.get_users()
-        targeted_users = [user for user in users if self._user_is_selected(user)]
+        targeted_users = [user for user in users if self._user_filter.matches(user)]
         user_plans: list[UserPlan] = []
         total_artist_count = 0
         total_eligible_count = 0
@@ -126,36 +125,6 @@ class Planner:
                 replaced_count += 1
         return created_count, replaced_count
 
-    def _artist_is_selected(self, artist_name: str) -> bool:
-        normalized = normalize_name(artist_name)
-
-        if self.settings.artist_allowlist:
-            allowed = {normalize_name(item) for item in self.settings.artist_allowlist}
-            if normalized not in allowed:
-                return False
-
-        if self.settings.artist_denylist:
-            denied = {normalize_name(item) for item in self.settings.artist_denylist}
-            if normalized in denied:
-                return False
-
-        return True
-
-    def _user_is_selected(self, user: JellyfinUser) -> bool:
-        normalized = normalize_name(user.name)
-
-        if self.settings.user_allowlist:
-            allowed = {normalize_name(item) for item in self.settings.user_allowlist}
-            if normalized not in allowed:
-                return False
-
-        if self.settings.user_denylist:
-            denied = {normalize_name(item) for item in self.settings.user_denylist}
-            if normalized in denied:
-                return False
-
-        return not user.policy.is_disabled
-
     def _plan_for_user(self, user: JellyfinUser) -> UserPlan:
         artists = self.jellyfin.get_artists(user.id)
         existing_playlists = {
@@ -168,7 +137,7 @@ class Planner:
         artist_plans: list[ArtistPlan] = []
 
         for artist in artists:
-            if not self._artist_is_selected(artist.name):
+            if not self._artist_filter.matches(artist.name):
                 continue
             try:
                 plan = self._plan_for_artist(user, artist, existing_playlists)
@@ -206,7 +175,7 @@ class Planner:
         existing_playlists: dict[str, JellyfinPlaylist],
     ) -> ArtistPlan:
         all_local_tracks = self.jellyfin.get_tracks_for_artist(user.id, artist)
-        local_tracks = self._filter_tracks_by_library_path(all_local_tracks)
+        local_tracks = self._library_path_filter.filter_tracks(all_local_tracks)
         filtered_out_count = len(all_local_tracks) - len(local_tracks)
         local_count = len(local_tracks)
         eligible = local_count > self.settings.min_tracks_per_artist
@@ -389,7 +358,7 @@ class Planner:
         return playlist_plan
 
     def _get_provider_tracks(self, artist_name: str) -> list[ProviderTrack]:
-        cache_key = normalize_name(artist_name)
+        cache_key = self._provider_cache_key(artist_name)
         cached = self._provider_track_cache.get(cache_key)
         if isinstance(cached, Exception):
             raise cached
@@ -409,51 +378,9 @@ class Planner:
         self._provider_track_cache[cache_key] = provider_tracks
         return provider_tracks
 
-    def _filter_tracks_by_library_path(
-        self,
-        tracks: Iterable[JellyfinTrack],
-    ) -> list[JellyfinTrack]:
-        filtered: list[JellyfinTrack] = []
-        for track in tracks:
-            normalized_path = self._normalize_track_path(track.path)
-            if not self._path_is_selected(normalized_path):
-                continue
-            filtered.append(track)
-        return filtered
-
-    def _path_is_selected(self, normalized_path: str | None) -> bool:
-        if self._library_path_allowlist:
-            if normalized_path is None:
-                return False
-            if not any(
-                self._path_matches_prefix(normalized_path, prefix)
-                for prefix in self._library_path_allowlist
-            ):
-                return False
-
-        if self._library_path_denylist:
-            if normalized_path is not None and any(
-                self._path_matches_prefix(normalized_path, prefix)
-                for prefix in self._library_path_denylist
-            ):
-                return False
-
-        return True
-
     @staticmethod
-    def _normalize_track_path(path: str | None) -> str | None:
-        if not path:
-            return None
-        return path.replace("\\", "/").rstrip("/").casefold()
-
-    @staticmethod
-    def _normalize_path_prefix(path: str) -> str:
-        normalized = path.replace("\\", "/").rstrip("/").casefold()
-        return normalized or "/"
-
-    @staticmethod
-    def _path_matches_prefix(path: str, prefix: str) -> bool:
-        return path == prefix or path.startswith(f"{prefix}/")
+    def _provider_cache_key(artist_name: str) -> str:
+        return normalize_name(artist_name)
 
     def _log_applied_playlist(
         self,
