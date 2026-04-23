@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=20.0, alias="REQUEST_TIMEOUT_SECONDS")
     request_max_retries: int = Field(default=2, alias="REQUEST_MAX_RETRIES")
     retry_backoff_seconds: float = Field(default=1.0, alias="RETRY_BACKOFF_SECONDS")
+    max_provider_tracks: int = Field(default=200, alias="MAX_PROVIDER_TRACKS")
 
     artist_allowlist: CsvList = Field(default_factory=list, alias="ARTIST_ALLOWLIST")
     artist_denylist: CsvList = Field(default_factory=list, alias="ARTIST_DENYLIST")

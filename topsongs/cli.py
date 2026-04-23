@@ -61,6 +61,7 @@ def main() -> int:
                 timeout_seconds=settings.request_timeout_seconds,
                 max_retries=settings.request_max_retries,
                 retry_backoff_seconds=settings.retry_backoff_seconds,
+                max_tracks=settings.max_provider_tracks,
             )
             provider = LastFmProvider(
                 api_key=settings.lastfm_api_key,
