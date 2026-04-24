@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from topsongs.filters import LibraryPathFilter
 from topsongs.models import (
     JellyfinArtist,
+    JellyfinPlaylist,
     JellyfinTrack,
     JellyfinUser,
     JellyfinUserPolicy,
@@ -20,6 +21,7 @@ class SettingsStub:
     user_allowlist = []
     user_denylist = []
     min_tracks_per_artist = 10
+    playlist_name_prefix = "Top Songs - "
 
 
 class LibraryPathFilterTests(unittest.TestCase):
@@ -127,6 +129,139 @@ class LibraryPathFilterTests(unittest.TestCase):
         self.assertEqual(user_plan.failed_artist_count, 1)
         self.assertEqual(len(user_plan.artists), 1)
         self.assertEqual(user_plan.artists[0].error, "track lookup failed")
+
+    def test_playlist_name_uses_configured_prefix(self) -> None:
+        class PrefixedSettings(SettingsStub):
+            playlist_name_prefix = "Best Of - "
+
+        planner = Planner(PrefixedSettings(), jellyfin=None, provider=MagicMock(name="lastfm"))
+
+        self.assertEqual(planner._playlist_name("Powerwolf"), "Best Of - Powerwolf")
+
+    def test_deletes_orphan_managed_playlists_after_planning(self) -> None:
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted_ids = []
+
+            def get_artists(self, user_id):
+                return [JellyfinArtist(id="a1", name="Powerwolf")]
+
+            def get_playlists_for_user(self, user_id):
+                return [
+                    JellyfinPlaylist(id="p1", name="Top Songs - Powerwolf"),
+                    JellyfinPlaylist(id="p2", name="Top Songs - Blind Guardian"),
+                    JellyfinPlaylist(id="p3", name="Favorites"),
+                ]
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id=str(index), name=f"song{index}", path=f"/music/song{index}.flac")
+                    for index in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+            def delete_playlist(self, playlist_id):
+                self.deleted_ids.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        jellyfin = JellyfinStub()
+        planner = Planner(SettingsStub(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.planned_playlist_count, 1)
+        self.assertEqual(user_plan.orphan_deleted_count, 1)
+        self.assertEqual(set(jellyfin.deleted_ids), {"p1", "p2"})
+
+    def test_orphan_cleanup_respects_configured_prefix(self) -> None:
+        class PrefixedSettings(SettingsStub):
+            playlist_name_prefix = "Best Of - "
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted_ids = []
+
+            def get_artists(self, user_id):
+                return []
+
+            def get_playlists_for_user(self, user_id):
+                return [
+                    JellyfinPlaylist(id="p1", name="Best Of - Blind Guardian"),
+                    JellyfinPlaylist(id="p2", name="Top Songs - Legacy"),
+                    JellyfinPlaylist(id="p3", name="Favorites"),
+                ]
+
+            def delete_playlist(self, playlist_id):
+                self.deleted_ids.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        jellyfin = JellyfinStub()
+        planner = Planner(PrefixedSettings(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.orphan_deleted_count, 1)
+        self.assertEqual(jellyfin.deleted_ids, ["p1"])
+
+    def test_existing_playlist_is_deleted_when_artist_is_no_longer_eligible(self) -> None:
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted_ids = []
+
+            def get_artists(self, user_id):
+                return [JellyfinArtist(id="a1", name="Powerwolf")]
+
+            def get_playlists_for_user(self, user_id):
+                return [JellyfinPlaylist(id="p1", name="Top Songs - Powerwolf")]
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id=str(index), name=f"song{index}", path=f"/music/song{index}.flac")
+                    for index in range(1, 11)
+                ]
+
+            def delete_playlist(self, playlist_id):
+                self.deleted_ids.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        jellyfin = JellyfinStub()
+        planner = Planner(SettingsStub(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.planned_playlist_count, 0)
+        self.assertEqual(user_plan.orphan_deleted_count, 1)
+        self.assertEqual(jellyfin.deleted_ids, ["p1"])
+
+    def test_orphan_delete_failure_is_isolated(self) -> None:
+        class JellyfinStub:
+            def get_artists(self, user_id):
+                return []
+
+            def get_playlists_for_user(self, user_id):
+                return [JellyfinPlaylist(id="p1", name="Top Songs - Powerwolf")]
+
+            def delete_playlist(self, playlist_id):
+                raise RuntimeError("delete failed")
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        planner = Planner(SettingsStub(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.orphan_deleted_count, 0)
+        self.assertIn("Failed to delete orphan playlist p1 (Top Songs - Powerwolf): delete failed", user_plan.notes)
 
 
 if __name__ == "__main__":

@@ -81,13 +81,14 @@ def main() -> int:
     logger.info("event=finish last_run_path=%s", last_run_path)
     logger.info(
         "event=summary users_seen=%s targeted_users=%s artists_seen=%s eligible=%s "
-        "created=%s replaced=%s failed_users=%s failed_artists=%s",
+        "created=%s replaced=%s orphan_deleted=%s failed_users=%s failed_artists=%s",
         report.user_count_seen,
         report.targeted_user_count,
         report.artist_count_seen,
         report.eligible_artist_count,
         report.created_playlist_count,
         report.replaced_playlist_count,
+        report.orphan_deleted_count,
         report.failed_user_count,
         report.failed_artist_count,
     )

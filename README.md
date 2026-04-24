@@ -3,7 +3,7 @@
 `topsongs` creates Jellyfin music playlists from Last.fm top tracks. For each
 eligible artist in a Jellyfin music library, it fetches that artist's
 popularity-ranked Last.fm top tracks, matches those titles against local
-Jellyfin tracks, and creates a `Top Songs - <Artist>` playlist for each target
+Jellyfin tracks, and creates a `<PLAYLIST_NAME_PREFIX><Artist>` playlist for each target
 Jellyfin user.
 
 The tool is designed for scheduled container use, but it can also be run as a
@@ -17,12 +17,13 @@ For each target Jellyfin user, `topsongs`:
 2. Skips artists with `MIN_TRACKS_PER_ARTIST` or fewer local songs.
 3. Fetches Last.fm top tracks for each eligible artist.
 4. Matches Last.fm track titles conservatively against local Jellyfin tracks.
-5. Creates a fresh `Top Songs - <Artist>` playlist in matched Last.fm rank order.
+5. Creates a fresh `<PLAYLIST_NAME_PREFIX><Artist>` playlist in matched Last.fm rank order.
 6. Removes an older playlist with the same name after the replacement is created.
-7. Writes a compact run summary and detailed container logs.
+7. Deletes managed playlists with the configured prefix when they are no longer planned in the current run.
+8. Writes a compact run summary and detailed container logs.
 
 The Jellyfin API key must be able to read users, read music items, create
-playlists, and delete replaced playlists.
+playlists, and delete managed playlists.
 
 ## Requirements
 
@@ -72,6 +73,7 @@ REQUEST_TIMEOUT_SECONDS=20
 REQUEST_MAX_RETRIES=2
 RETRY_BACKOFF_SECONDS=1.0
 MAX_PROVIDER_TRACKS=200
+PLAYLIST_NAME_PREFIX=Top Songs - 
 ARTIST_ALLOWLIST=
 ARTIST_DENYLIST=
 USER_ALLOWLIST=
@@ -95,6 +97,7 @@ RUN_ON_STARTUP=false
 | `REQUEST_MAX_RETRIES` | no | `2` | Retry count for retryable network and server errors. |
 | `RETRY_BACKOFF_SECONDS` | no | `1.0` | Base delay between retries. |
 | `MAX_PROVIDER_TRACKS` | no | `200` | Maximum Last.fm top tracks to fetch and consider per artist. |
+| `PLAYLIST_NAME_PREFIX` | no | `Top Songs - ` | Prefix used for managed playlist names such as `Top Songs - Powerwolf`. Only playlists with this prefix are considered managed and eligible for cleanup. |
 | `ARTIST_ALLOWLIST` | no | empty | Comma-separated artist names to include. Empty means all artists. |
 | `ARTIST_DENYLIST` | no | empty | Comma-separated artist names to exclude. |
 | `USER_ALLOWLIST` | no | empty | Comma-separated Jellyfin user names to include. Empty means all enabled users. |
@@ -226,3 +229,4 @@ to use the project publicly.
 - No direct music library filesystem access is required.
 - Matching is intentionally conservative.
 - Playlist replacement is create-new then remove-old, not in-place mutation.
+- Managed playlists are identified by `PLAYLIST_NAME_PREFIX`; managed playlists not planned in the current run are deleted.
