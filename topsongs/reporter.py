@@ -26,6 +26,7 @@ class Reporter:
                 f"eligible_artist_count={report.eligible_artist_count}",
                 f"created_playlist_count={report.created_playlist_count}",
                 f"replaced_playlist_count={report.replaced_playlist_count}",
+                f"orphan_deleted_count={report.orphan_deleted_count}",
                 f"failed_user_count={report.failed_user_count}",
                 f"failed_artist_count={report.failed_artist_count}",
             ]

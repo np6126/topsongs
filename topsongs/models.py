@@ -99,6 +99,7 @@ class UserPlan(BaseModel):
     artist_count_seen: int
     eligible_artist_count: int
     planned_playlist_count: int
+    orphan_deleted_count: int = 0
     failed_artist_count: int = 0
     artists: list[ArtistPlan] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
@@ -115,6 +116,7 @@ class RunReport(BaseModel):
     eligible_artist_count: int
     created_playlist_count: int
     replaced_playlist_count: int
+    orphan_deleted_count: int = 0
     failed_user_count: int = 0
     failed_artist_count: int = 0
     users: list[UserPlan]
@@ -132,6 +134,7 @@ class RunReport(BaseModel):
             eligible_artist_count=0,
             created_playlist_count=0,
             replaced_playlist_count=0,
+            orphan_deleted_count=0,
             failed_user_count=0,
             failed_artist_count=0,
             users=[],

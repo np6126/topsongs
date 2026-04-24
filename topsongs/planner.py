@@ -53,6 +53,7 @@ class Planner:
         total_eligible_count = 0
         total_created_count = 0
         total_replaced_count = 0
+        total_orphan_deleted_count = 0
         total_failed_user_count = 0
         total_failed_artist_count = 0
 
@@ -80,6 +81,7 @@ class Planner:
             created_count, replaced_count = self._count_playlist_actions(user_plan)
             total_created_count += created_count
             total_replaced_count += replaced_count
+            total_orphan_deleted_count += user_plan.orphan_deleted_count
 
         finished_at = datetime.now(timezone.utc)
         return RunReport(
@@ -92,6 +94,7 @@ class Planner:
             eligible_artist_count=total_eligible_count,
             created_playlist_count=total_created_count,
             replaced_playlist_count=total_replaced_count,
+            orphan_deleted_count=total_orphan_deleted_count,
             failed_user_count=total_failed_user_count,
             failed_artist_count=total_failed_artist_count,
             users=user_plans,
@@ -106,6 +109,7 @@ class Planner:
             artist_count_seen=0,
             eligible_artist_count=0,
             planned_playlist_count=0,
+            orphan_deleted_count=0,
             failed_artist_count=0,
             notes=["User processing failed before artist iteration completed."],
             error=str(exc),
@@ -133,6 +137,8 @@ class Planner:
         }
         eligible_count = 0
         planned_count = 0
+        planned_playlist_names: set[str] = set()
+        user_notes: list[str] = []
         failed_artist_count = 0
         artist_plans: list[ArtistPlan] = []
 
@@ -155,7 +161,15 @@ class Planner:
                 eligible_count += 1
             if plan.playlist_plan:
                 planned_count += 1
+                planned_playlist_names.add(plan.playlist_plan.playlist_name)
             artist_plans.append(plan)
+
+        orphan_deleted_count = self._delete_orphan_playlists(
+            user=user,
+            existing_playlists=existing_playlists,
+            planned_playlist_names=planned_playlist_names,
+            notes=user_notes,
+        )
 
         return UserPlan(
             user_id=user.id,
@@ -164,8 +178,10 @@ class Planner:
             artist_count_seen=len(artists),
             eligible_artist_count=eligible_count,
             planned_playlist_count=planned_count,
+            orphan_deleted_count=orphan_deleted_count,
             failed_artist_count=failed_artist_count,
             artists=artist_plans,
+            notes=user_notes,
         )
 
     def _plan_for_artist(
@@ -276,9 +292,11 @@ class Planner:
             error=str(exc),
         )
 
-    @staticmethod
-    def _playlist_name(artist_name: str) -> str:
-        return f"Top Songs - {artist_name}"
+    def _playlist_name(self, artist_name: str) -> str:
+        return f"{self.settings.playlist_name_prefix}{artist_name}"
+
+    def _is_managed_playlist_name(self, playlist_name: str) -> bool:
+        return playlist_name.startswith(self.settings.playlist_name_prefix)
 
     @staticmethod
     def _build_planned_tracks(matches: list[TrackMatch]) -> list[PlannedPlaylistTrack]:
@@ -356,6 +374,44 @@ class Planner:
             planned_tracks,
         )
         return playlist_plan
+
+    def _delete_orphan_playlists(
+        self,
+        user: JellyfinUser,
+        existing_playlists: dict[str, JellyfinPlaylist],
+        planned_playlist_names: set[str],
+        notes: list[str],
+    ) -> int:
+        orphan_deleted_count = 0
+
+        for playlist_name, playlist in list(existing_playlists.items()):
+            if not self._is_managed_playlist_name(playlist_name):
+                continue
+            if playlist_name in planned_playlist_names:
+                continue
+            try:
+                self.jellyfin.delete_playlist(playlist.id)
+                orphan_deleted_count += 1
+                del existing_playlists[playlist_name]
+                logger.info(
+                    "event=playlist_orphan_deleted user=%s playlist=%s playlist_id=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(playlist_name),
+                    playlist.id,
+                )
+            except Exception as exc:
+                notes.append(
+                    f"Failed to delete orphan playlist {playlist.id} ({playlist_name}): {exc}"
+                )
+                logger.exception(
+                    "event=playlist_orphan_delete_failed user=%s playlist=%s playlist_id=%s error=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(playlist_name),
+                    playlist.id,
+                    exc,
+                )
+
+        return orphan_deleted_count
 
     def _get_provider_tracks(self, artist_name: str) -> list[ProviderTrack]:
         cache_key = self._provider_cache_key(artist_name)
