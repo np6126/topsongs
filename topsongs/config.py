@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     lastfm_api_key: str = Field(alias="LASTFM_API_KEY")
 
     min_tracks_per_artist: int = Field(default=10, alias="MIN_TRACKS_PER_ARTIST")
+    min_track_duration_seconds: int = Field(default=60, alias="MIN_TRACK_DURATION_SECONDS")
     state_dir: Path = Field(default=Path("/app/state"), alias="STATE_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     request_timeout_seconds: float = Field(default=20.0, alias="REQUEST_TIMEOUT_SECONDS")
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     retry_backoff_seconds: float = Field(default=1.0, alias="RETRY_BACKOFF_SECONDS")
     max_provider_tracks: int = Field(default=200, alias="MAX_PROVIDER_TRACKS")
     playlist_name_prefix: str = Field(default="Top Songs - ", alias="PLAYLIST_NAME_PREFIX")
+    append_unmatched_songs: bool = Field(default=True, alias="APPEND_UNMATCHED_SONGS")
 
     artist_allowlist: CsvList = Field(default_factory=list, alias="ARTIST_ALLOWLIST")
     artist_denylist: CsvList = Field(default_factory=list, alias="ARTIST_DENYLIST")

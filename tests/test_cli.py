@@ -1,8 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from topsongs import cli
-from topsongs.models import RunReport
+from topsongs.models import ArtistPlan, RunReport, UserPlan
 
 
 def test_main_passes_max_tracks_only_to_lastfm_provider(monkeypatch, tmp_path) -> None:
@@ -56,6 +57,68 @@ def test_main_passes_max_tracks_only_to_lastfm_provider(monkeypatch, tmp_path) -
 
     assert "max_tracks" not in jellyfin_kwargs
     assert lastfm_kwargs["max_tracks"] == 75
+
+
+def test_unmatched_summary_logs_details(monkeypatch) -> None:
+    logger = MagicMock()
+    monkeypatch.setattr(cli, "logger", logger)
+    report = RunReport.empty(provider="lastfm")
+    report.users = [
+        UserPlan(
+            user_id="u1",
+            user_name="Alice",
+            is_administrator=False,
+            artist_count_seen=1,
+            eligible_artist_count=1,
+            planned_playlist_count=1,
+            artists=[
+                ArtistPlan(
+                    artist="Powerwolf",
+                    local_track_count=11,
+                    eligible=True,
+                    provider="lastfm",
+                    unmatched_local_tracks=["Sanctified with Dynamite"],
+                )
+            ],
+        ),
+        UserPlan(
+            user_id="u2",
+            user_name="Bob",
+            is_administrator=False,
+            artist_count_seen=1,
+            eligible_artist_count=1,
+            planned_playlist_count=1,
+            artists=[
+                ArtistPlan(
+                    artist="Powerwolf",
+                    local_track_count=11,
+                    eligible=True,
+                    provider="lastfm",
+                    unmatched_local_tracks=["Sanctified with Dynamite"],
+                )
+            ],
+        ),
+    ]
+
+    cli._log_unmatched_summary(report)
+
+    logger.info.assert_any_call(
+        "event=summary_unmatched type=local artist=%s track=%s",
+        "Powerwolf",
+        "Sanctified with Dynamite",
+    )
+    local_calls = [
+        call
+        for call in logger.info.call_args_list
+        if call.args[0] == "event=summary_unmatched type=local artist=%s track=%s"
+    ]
+    assert len(local_calls) == 1
+    provider_calls = [
+        call
+        for call in logger.info.call_args_list
+        if "type=provider" in call.args[0]
+    ]
+    assert not provider_calls
 
 
 class _NullContext:

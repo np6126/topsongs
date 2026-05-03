@@ -12,13 +12,13 @@ def match_tracks(
 ) -> tuple[list[TrackMatch], list[str]]:
     local_by_exact: dict[str, JellyfinTrack] = {}
     local_by_normalized: dict[str, JellyfinTrack] = {}
+    local_track_list = list(local_tracks)
 
-    for track in local_tracks:
+    for track in local_track_list:
         local_by_exact.setdefault(track.name, track)
         local_by_normalized.setdefault(normalize_name(track.name), track)
 
     matches: list[TrackMatch] = []
-    unmatched: list[str] = []
     used_local_ids: set[str] = set()
 
     for provider_track in provider_tracks:
@@ -30,7 +30,6 @@ def match_tracks(
             match_type = "normalized"
 
         if local is None or local.id in used_local_ids:
-            unmatched.append(provider_track.title)
             continue
 
         used_local_ids.add(local.id)
@@ -44,4 +43,8 @@ def match_tracks(
             )
         )
 
-    return matches, unmatched
+    unmatched_local = [
+        track.name for track in local_track_list if track.id not in used_local_ids
+    ]
+
+    return matches, unmatched_local
