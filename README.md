@@ -67,6 +67,7 @@ JELLYFIN_URL=http://jellyfin:8096
 JELLYFIN_API_KEY=replace_me
 LASTFM_API_KEY=replace_me
 MIN_TRACKS_PER_ARTIST=10
+MIN_TRACK_DURATION_SECONDS=60
 STATE_DIR=/app/state
 LOG_LEVEL=INFO
 REQUEST_TIMEOUT_SECONDS=20
@@ -74,6 +75,7 @@ REQUEST_MAX_RETRIES=2
 RETRY_BACKOFF_SECONDS=1.0
 MAX_PROVIDER_TRACKS=200
 PLAYLIST_NAME_PREFIX=Top Songs - 
+APPEND_UNMATCHED_SONGS=true
 ARTIST_ALLOWLIST=
 ARTIST_DENYLIST=
 USER_ALLOWLIST=
@@ -91,6 +93,7 @@ RUN_ON_STARTUP=false
 | `JELLYFIN_API_KEY` | yes | none | Jellyfin API key used to read users/items and create/delete playlists. |
 | `LASTFM_API_KEY` | yes | none | Last.fm API key used to fetch artist top tracks. |
 | `MIN_TRACKS_PER_ARTIST` | no | `10` | Artists must have more local tracks than this value to be processed. |
+| `MIN_TRACK_DURATION_SECONDS` | no | `60` | Local tracks shorter than this are excluded from matching and playlists. Set to `0` to disable duration filtering. |
 | `STATE_DIR` | no | `/app/state` | Directory for runtime files such as `last_run.txt` and the lockfile. |
 | `LOG_LEVEL` | no | `INFO` | Python logging level. Use `DEBUG` for request-level troubleshooting. |
 | `REQUEST_TIMEOUT_SECONDS` | no | `20` | HTTP timeout for Jellyfin and Last.fm requests. |
@@ -98,6 +101,7 @@ RUN_ON_STARTUP=false
 | `RETRY_BACKOFF_SECONDS` | no | `1.0` | Base delay between retries. |
 | `MAX_PROVIDER_TRACKS` | no | `200` | Maximum Last.fm top tracks to fetch and consider per artist. |
 | `PLAYLIST_NAME_PREFIX` | no | `Top Songs - ` | Prefix used for managed playlist names such as `Top Songs - Powerwolf`. Only playlists with this prefix are considered managed and eligible for cleanup. |
+| `APPEND_UNMATCHED_SONGS` | no | `true` | Whether local tracks missing from the provider top list are appended to the end of generated playlists. Set to `false` to keep playlists limited to provider matches. |
 | `ARTIST_ALLOWLIST` | no | empty | Comma-separated artist names to include. Empty means all artists. |
 | `ARTIST_DENYLIST` | no | empty | Comma-separated artist names to exclude. |
 | `USER_ALLOWLIST` | no | empty | Comma-separated Jellyfin user names to include. Empty means all enabled users. |
@@ -187,11 +191,14 @@ STATE_DIR/last_run.txt
 ```
 
 The summary contains start and finish times, provider name, user and artist
-counts, playlist counts, and failure counts. Parallel runs are prevented by a
-lockfile in `STATE_DIR`.
+counts, playlist counts, failure counts, and local unmatched counts. Local
+tracks missing from the provider list are reported once per artist and title,
+independent of how many users saw the same track. Parallel runs are prevented by
+a lockfile in `STATE_DIR`.
 
-Detailed output is written to container logs, including the ordered track list
-for each applied playlist.
+Detailed output is written to container logs, including match counts, local
+tracks not present in the provider list, and the ordered track list for each
+applied playlist.
 
 ## Scripts and Runtime Files
 

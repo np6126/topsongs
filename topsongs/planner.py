@@ -10,6 +10,7 @@ from .matcher import match_tracks
 from .models import (
     ArtistPlan,
     JellyfinPlaylist,
+    JellyfinTrack,
     JellyfinUser,
     PlannedPlaylistTrack,
     PlaylistPlan,
@@ -191,22 +192,38 @@ class Planner:
         existing_playlists: dict[str, JellyfinPlaylist],
     ) -> ArtistPlan:
         all_local_tracks = self.jellyfin.get_tracks_for_artist(user.id, artist)
-        local_tracks = self._library_path_filter.filter_tracks(all_local_tracks)
-        filtered_out_count = len(all_local_tracks) - len(local_tracks)
+        path_filtered_tracks = self._library_path_filter.filter_tracks(all_local_tracks)
+        local_tracks = self._filter_short_tracks(path_filtered_tracks)
+        short_track_count = len(path_filtered_tracks) - len(local_tracks)
         local_count = len(local_tracks)
         eligible = local_count > self.settings.min_tracks_per_artist
         plan = self._initial_artist_plan(artist.name, local_count, eligible)
 
-        if filtered_out_count:
+        path_filtered_out_count = len(all_local_tracks) - len(path_filtered_tracks)
+        if path_filtered_out_count:
             plan.notes.append(
-                f"Excluded {filtered_out_count} local tracks because they do not match "
+                f"Excluded {path_filtered_out_count} local tracks because they do not match "
                 "the configured library path filters."
             )
             logger.info(
                 "event=library_filtered user=%s artist=%s skipped_tracks=%s",
                 sanitize_untrusted_text(user.name),
                 sanitize_untrusted_text(artist.name),
-                filtered_out_count,
+                path_filtered_out_count,
+            )
+
+        if short_track_count:
+            plan.notes.append(
+                f"Excluded {short_track_count} local tracks shorter than "
+                f"{self.settings.min_track_duration_seconds} seconds."
+            )
+            logger.info(
+                "event=short_tracks_filtered user=%s artist=%s skipped_tracks=%s "
+                "min_duration_seconds=%s",
+                sanitize_untrusted_text(user.name),
+                sanitize_untrusted_text(artist.name),
+                short_track_count,
+                self.settings.min_track_duration_seconds,
             )
 
         if not eligible:
@@ -239,15 +256,18 @@ class Planner:
 
         plan.provider_tracks = provider_tracks
 
-        matches, unmatched = match_tracks(provider_tracks, local_tracks)
+        matches, unmatched_local = match_tracks(provider_tracks, local_tracks)
         plan.matched_tracks = matches
-        plan.unmatched_tracks = unmatched
+        plan.unmatched_local_tracks = unmatched_local
 
-        if matches:
+        playlist_tracks = list(matches)
+        if self.settings.append_unmatched_songs:
+            playlist_tracks.extend(self._build_unmatched_local_matches(local_tracks, matches))
+        if playlist_tracks:
             plan.playlist_plan = self._apply_playlist_plan(
                 user=user,
                 artist_name=artist.name,
-                matches=matches,
+                matches=playlist_tracks,
                 existing_playlists=existing_playlists,
                 notes=plan.notes,
             )
@@ -258,13 +278,13 @@ class Planner:
 
         logger.info(
             "event=artist_done user=%s artist=%s local=%s provider_tracks=%s "
-            "matched=%s unmatched=%s applied=%s",
+            "matched=%s unmatched_local=%s applied=%s",
             sanitize_untrusted_text(user.name),
             sanitize_untrusted_text(artist.name),
             local_count,
             len(provider_tracks),
             len(matches),
-            len(unmatched),
+            len(unmatched_local),
             bool(plan.playlist_plan),
         )
         return plan
@@ -310,6 +330,34 @@ class Planner:
                 album=match.album,
             )
             for index, match in enumerate(matches, start=1)
+        ]
+
+    @staticmethod
+    def _build_unmatched_local_matches(
+        local_tracks: list[JellyfinTrack],
+        matches: list[TrackMatch],
+    ) -> list[TrackMatch]:
+        matched_ids = {match.jellyfin_item_id for match in matches}
+        return [
+            TrackMatch(
+                provider_title=track.name,
+                jellyfin_item_id=track.id,
+                jellyfin_title=track.name,
+                match_type="unmatched_local",
+                album=track.album,
+            )
+            for track in local_tracks
+            if track.id not in matched_ids
+        ]
+
+    def _filter_short_tracks(self, tracks: list[JellyfinTrack]) -> list[JellyfinTrack]:
+        min_duration_ticks = self.settings.min_track_duration_seconds * 10_000_000
+        if min_duration_ticks <= 0:
+            return tracks
+        return [
+            track
+            for track in tracks
+            if track.runtime_ticks is None or track.runtime_ticks >= min_duration_ticks
         ]
 
     def _apply_playlist_plan(
@@ -404,7 +452,8 @@ class Planner:
                     f"Failed to delete orphan playlist {playlist.id} ({playlist_name}): {exc}"
                 )
                 logger.exception(
-                    "event=playlist_orphan_delete_failed user=%s playlist=%s playlist_id=%s error=%s",
+                    "event=playlist_orphan_delete_failed user=%s playlist=%s "
+                    "playlist_id=%s error=%s",
                     sanitize_untrusted_text(user.name),
                     sanitize_untrusted_text(playlist_name),
                     playlist.id,

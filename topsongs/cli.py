@@ -9,9 +9,11 @@ from pathlib import Path
 from .config import Settings
 from .jellyfin import JellyfinClient
 from .logging_setup import configure_logging
+from .models import RunReport
 from .planner import Planner
 from .providers.lastfm import LastFmProvider
 from .reporter import Reporter
+from .sanitize import sanitize_untrusted_text
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,8 @@ def main() -> int:
     logger.info("event=finish last_run_path=%s", last_run_path)
     logger.info(
         "event=summary users_seen=%s targeted_users=%s artists_seen=%s eligible=%s "
-        "created=%s replaced=%s orphan_deleted=%s failed_users=%s failed_artists=%s",
+        "created=%s replaced=%s orphan_deleted=%s failed_users=%s failed_artists=%s "
+        "unmatched_local=%s",
         report.user_count_seen,
         report.targeted_user_count,
         report.artist_count_seen,
@@ -91,8 +94,28 @@ def main() -> int:
         report.orphan_deleted_count,
         report.failed_user_count,
         report.failed_artist_count,
+        report.unmatched_local_track_count,
     )
+    _log_unmatched_summary(report)
     return 0
+
+
+def _log_unmatched_summary(report: RunReport) -> None:
+    seen_local_tracks: set[tuple[str, str]] = set()
+
+    for user in report.users:
+        for artist in user.artists:
+            safe_artist = sanitize_untrusted_text(artist.artist)
+            for track_title in artist.unmatched_local_tracks:
+                local_key = (artist.artist, track_title)
+                if local_key in seen_local_tracks:
+                    continue
+                seen_local_tracks.add(local_key)
+                logger.info(
+                    "event=summary_unmatched type=local artist=%s track=%s",
+                    safe_artist,
+                    sanitize_untrusted_text(track_title),
+                )
 
 
 if __name__ == "__main__":

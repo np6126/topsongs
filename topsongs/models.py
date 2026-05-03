@@ -32,6 +32,7 @@ class JellyfinTrack(BaseModel):
     artists: list[str] = Field(default_factory=list)
     album: str | None = None
     path: str | None = None
+    runtime_ticks: int | None = None
     index_number: int | None = None
     parent_index_number: int | None = None
     provider_ids: dict[str, str] = Field(default_factory=dict)
@@ -55,7 +56,7 @@ class TrackMatch(BaseModel):
     provider_title: str
     jellyfin_item_id: str
     jellyfin_title: str
-    match_type: Literal["exact", "normalized"]
+    match_type: Literal["exact", "normalized", "unmatched_local"]
     album: str | None = None
 
 
@@ -64,7 +65,7 @@ class PlannedPlaylistTrack(BaseModel):
     provider_title: str
     jellyfin_title: str
     jellyfin_item_id: str
-    match_type: Literal["exact", "normalized"]
+    match_type: Literal["exact", "normalized", "unmatched_local"]
     album: str | None = None
 
 
@@ -86,7 +87,7 @@ class ArtistPlan(BaseModel):
     provider: str
     provider_tracks: list[ProviderTrack] = Field(default_factory=list)
     matched_tracks: list[TrackMatch] = Field(default_factory=list)
-    unmatched_tracks: list[str] = Field(default_factory=list)
+    unmatched_local_tracks: list[str] = Field(default_factory=list)
     playlist_plan: PlaylistPlan | None = None
     notes: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -120,6 +121,17 @@ class RunReport(BaseModel):
     failed_user_count: int = 0
     failed_artist_count: int = 0
     users: list[UserPlan]
+
+    @property
+    def unmatched_local_track_count(self) -> int:
+        return len(
+            {
+                (artist.artist, track_title)
+                for user in self.users
+                for artist in user.artists
+                for track_title in artist.unmatched_local_tracks
+            }
+        )
 
     @classmethod
     def empty(cls, provider: str) -> "RunReport":

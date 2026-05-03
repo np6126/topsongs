@@ -21,7 +21,9 @@ class SettingsStub:
     user_allowlist = []
     user_denylist = []
     min_tracks_per_artist = 10
+    min_track_duration_seconds = 60
     playlist_name_prefix = "Top Songs - "
+    append_unmatched_songs = True
 
 
 class LibraryPathFilterTests(unittest.TestCase):
@@ -155,7 +157,11 @@ class LibraryPathFilterTests(unittest.TestCase):
 
             def get_tracks_for_artist(self, user_id, artist):
                 return [
-                    JellyfinTrack(id=str(index), name=f"song{index}", path=f"/music/song{index}.flac")
+                    JellyfinTrack(
+                        id=str(index),
+                        name=f"song{index}",
+                        path=f"/music/song{index}.flac",
+                    )
                     for index in range(1, 12)
                 ]
 
@@ -223,7 +229,11 @@ class LibraryPathFilterTests(unittest.TestCase):
 
             def get_tracks_for_artist(self, user_id, artist):
                 return [
-                    JellyfinTrack(id=str(index), name=f"song{index}", path=f"/music/song{index}.flac")
+                    JellyfinTrack(
+                        id=str(index),
+                        name=f"song{index}",
+                        path=f"/music/song{index}.flac",
+                    )
                     for index in range(1, 11)
                 ]
 
@@ -241,6 +251,126 @@ class LibraryPathFilterTests(unittest.TestCase):
         self.assertEqual(user_plan.planned_playlist_count, 0)
         self.assertEqual(user_plan.orphan_deleted_count, 1)
         self.assertEqual(jellyfin.deleted_ids, ["p1"])
+
+    def test_artist_plan_reports_local_tracks_not_present_in_provider_list(self) -> None:
+        class JellyfinStub:
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(
+                        id=str(index),
+                        name=f"song{index}",
+                        path=f"/music/song{index}.flac",
+                    )
+                    for index in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        planner = Planner(SettingsStub(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Powerwolf")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        self.assertEqual(
+            artist_plan.unmatched_local_tracks,
+            [f"song{index}" for index in range(2, 12)],
+        )
+        self.assertEqual(
+            artist_plan.playlist_plan.planned_item_ids,
+            [str(index) for index in range(1, 12)],
+        )
+        self.assertEqual(
+            [track.match_type for track in artist_plan.playlist_plan.planned_tracks],
+            ["exact", *["unmatched_local" for _ in range(2, 12)]],
+        )
+
+    def test_unmatched_local_tracks_can_be_excluded_from_playlist(self) -> None:
+        class SettingsWithoutAppend(SettingsStub):
+            append_unmatched_songs = False
+
+        class JellyfinStub:
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(
+                        id=str(index),
+                        name=f"song{index}",
+                        path=f"/music/song{index}.flac",
+                    )
+                    for index in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        planner = Planner(SettingsWithoutAppend(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Powerwolf")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        self.assertEqual(
+            artist_plan.unmatched_local_tracks,
+            [f"song{index}" for index in range(2, 12)],
+        )
+        self.assertEqual(artist_plan.playlist_plan.planned_item_ids, ["1"])
+        self.assertEqual(
+            [track.match_type for track in artist_plan.playlist_plan.planned_tracks],
+            ["exact"],
+        )
+
+    def test_short_tracks_are_excluded_from_playlist_and_eligibility(self) -> None:
+        class JellyfinStub:
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(
+                        id=str(index),
+                        name=f"song{index}",
+                        path=f"/music/song{index}.flac",
+                        runtime_ticks=61 * 10_000_000,
+                    )
+                    for index in range(1, 12)
+                ] + [
+                    JellyfinTrack(
+                        id="clip",
+                        name="clip",
+                        path="/music/clip.flac",
+                        runtime_ticks=59 * 10_000_000,
+                    )
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [
+            ProviderTrack(title="song1", rank=1),
+            ProviderTrack(title="clip", rank=2),
+        ]
+        planner = Planner(SettingsStub(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Powerwolf")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        self.assertEqual(artist_plan.local_track_count, 11)
+        self.assertIn(
+            "Excluded 1 local tracks shorter than 60 seconds.",
+            artist_plan.notes,
+        )
+        self.assertNotIn("clip", artist_plan.playlist_plan.planned_item_ids)
+        self.assertEqual(
+            artist_plan.playlist_plan.planned_item_ids,
+            [str(index) for index in range(1, 12)],
+        )
 
     def test_orphan_delete_failure_is_isolated(self) -> None:
         class JellyfinStub:
@@ -261,7 +391,10 @@ class LibraryPathFilterTests(unittest.TestCase):
         user_plan = planner._plan_for_user(user)
 
         self.assertEqual(user_plan.orphan_deleted_count, 0)
-        self.assertIn("Failed to delete orphan playlist p1 (Top Songs - Powerwolf): delete failed", user_plan.notes)
+        self.assertIn(
+            "Failed to delete orphan playlist p1 (Top Songs - Powerwolf): delete failed",
+            user_plan.notes,
+        )
 
 
 if __name__ == "__main__":

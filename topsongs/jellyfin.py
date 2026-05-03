@@ -72,7 +72,7 @@ class JellyfinClient:
             "IncludeItemTypes": "Audio",
             "ArtistIds": artist.id,
             "SortBy": "Album,SortName",
-            "Fields": "Path,ProviderIds,Album,Artists,ParentIndexNumber,IndexNumber",
+            "Fields": "Path,ProviderIds,Album,Artists,RunTimeTicks,ParentIndexNumber,IndexNumber",
         }
         payload = self._get(f"/Users/{user_id}/Items", params=params)
         tracks = payload.get("Items", [])
@@ -191,6 +191,7 @@ class JellyfinClient:
             artists=item.get("Artists") or [],
             album=item.get("Album"),
             path=item.get("Path"),
+            runtime_ticks=item.get("RunTimeTicks"),
             index_number=item.get("IndexNumber"),
             parent_index_number=item.get("ParentIndexNumber"),
             provider_ids=item.get("ProviderIds") or {},
