@@ -22,7 +22,7 @@ from .models import (
 from .normalize import normalize_name
 from .providers.base import TopSongsProvider
 from .providers.lastfm import LastFmError, LastFmNoTopTracksError, LastFmRateLimitError
-from .sanitize import sanitize_untrusted_text
+from .sanitize import sanitize_for_filename, sanitize_untrusted_text
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,7 @@ class Planner:
         )
 
     def _playlist_name(self, artist_name: str) -> str:
-        return f"{self.settings.playlist_name_prefix}{artist_name}"
+        return f"{self.settings.playlist_name_prefix}{sanitize_for_filename(artist_name)}"
 
     def _is_managed_playlist_name(self, playlist_name: str) -> bool:
         return playlist_name.startswith(self.settings.playlist_name_prefix)
