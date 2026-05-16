@@ -17,7 +17,7 @@ For each target Jellyfin user, `topsongs`:
 2. Skips artists with `MIN_TRACKS_PER_ARTIST` or fewer local songs.
 3. Fetches Last.fm top tracks for each eligible artist.
 4. Matches Last.fm track titles conservatively against local Jellyfin tracks.
-5. Creates a fresh `<PLAYLIST_NAME_PREFIX><Artist>` playlist in matched Last.fm rank order.
+5. Creates a fresh `<PLAYLIST_NAME_PREFIX><Artist>` playlist in matched Last.fm rank order. Characters that are invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in the artist part of the playlist name, so `AC/DC` becomes `Top Songs - AC_DC`.
 6. Removes an older playlist with the same name after the replacement is created.
 7. Deletes managed playlists with the configured prefix when they are no longer planned in the current run.
 8. Writes a compact run summary and detailed container logs.
