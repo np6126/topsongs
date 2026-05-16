@@ -55,6 +55,23 @@ class JellyfinClientTests(unittest.TestCase):
         self.assertEqual([playlist.id for playlist in playlists], ["p1", "p2"])
         self.assertEqual(playlists[0].name, "Top Songs - Powerwolf")
 
+    def test_get_artists_uses_album_artists_endpoint_with_user_id(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        calls = []
+        client._get = lambda path, params: calls.append((path, params)) or {  # type: ignore[method-assign]
+            "Items": [
+                {"Id": "a1", "Name": "AC/DC", "SortName": "ac/dc"},
+                {"Id": "a2", "Name": "Powerwolf", "SortName": "powerwolf"},
+            ]
+        }
+
+        artists = client.get_artists("user-1")
+
+        self.assertEqual(calls[0][0], "/Artists/AlbumArtists")
+        self.assertEqual(calls[0][1]["UserId"], "user-1")
+        self.assertEqual(len(artists), 2)
+        self.assertEqual(artists[0].name, "AC/DC")
+
     def test_get_tracks_for_artist_requests_and_maps_runtime_ticks(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
         calls = []

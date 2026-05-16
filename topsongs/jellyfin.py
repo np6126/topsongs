@@ -49,12 +49,12 @@ class JellyfinClient:
 
     def get_artists(self, user_id: str) -> list[JellyfinArtist]:
         params = {
+            "UserId": user_id,
             "Recursive": "true",
-            "IncludeItemTypes": "MusicArtist",
             "SortBy": "SortName",
             "Fields": "SortName",
         }
-        payload = self._get(f"/Users/{user_id}/Items", params=params)
+        payload = self._get("/Artists/AlbumArtists", params=params)
         artists = payload.get("Items", [])
         return [
             JellyfinArtist(
