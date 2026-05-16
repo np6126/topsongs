@@ -140,6 +140,11 @@ class LibraryPathFilterTests(unittest.TestCase):
 
         self.assertEqual(planner._playlist_name("Powerwolf"), "Best Of - Powerwolf")
 
+    def test_playlist_name_sanitizes_illegal_filename_chars(self) -> None:
+        planner = Planner(SettingsStub(), jellyfin=None, provider=MagicMock(name="lastfm"))
+
+        self.assertEqual(planner._playlist_name("AC/DC"), "Top Songs - AC_DC")
+
     def test_deletes_orphan_managed_playlists_after_planning(self) -> None:
         class JellyfinStub:
             def __init__(self) -> None:

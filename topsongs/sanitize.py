@@ -6,6 +6,7 @@ import unicodedata
 MAX_TITLE_LENGTH = 200
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+FILENAME_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def sanitize_untrusted_text(value: str, max_length: int = MAX_TITLE_LENGTH) -> str:
@@ -13,6 +14,10 @@ def sanitize_untrusted_text(value: str, max_length: int = MAX_TITLE_LENGTH) -> s
     text = "".join(ch if _is_safe_char(ch) else " " for ch in text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:max_length].rstrip()
+
+
+def sanitize_for_filename(name: str) -> str:
+    return FILENAME_UNSAFE_RE.sub("_", name)
 
 
 def _is_safe_char(ch: str) -> bool:
