@@ -54,15 +54,14 @@ class JellyfinClient:
             "SortBy": "SortName",
             "Fields": "SortName",
         }
-        payload = self._get("/Artists/AlbumArtists", params=params)
-        artists = payload.get("Items", [])
+        items = self._get_all_items("/Artists/AlbumArtists", params=params)
         return [
             JellyfinArtist(
                 id=item["Id"],
                 name=item.get("Name", ""),
                 sort_name=item.get("SortName"),
             )
-            for item in artists
+            for item in items
             if item.get("Id") and item.get("Name")
         ]
 
@@ -74,11 +73,10 @@ class JellyfinClient:
             "SortBy": "Album,SortName",
             "Fields": "Path,ProviderIds,Album,Artists,RunTimeTicks,ParentIndexNumber,IndexNumber",
         }
-        payload = self._get(f"/Users/{user_id}/Items", params=params)
-        tracks = payload.get("Items", [])
+        items = self._get_all_items(f"/Users/{user_id}/Items", params=params)
         return [
             self._track_from_item(item)
-            for item in tracks
+            for item in items
             if item.get("Id") and item.get("Name")
         ]
 
@@ -89,8 +87,7 @@ class JellyfinClient:
             "MediaTypes": "Audio",
             "SortBy": "SortName",
         }
-        payload = self._get(f"/Users/{user_id}/Items", params=params)
-        items = payload.get("Items", [])
+        items = self._get_all_items(f"/Users/{user_id}/Items", params=params)
         return [
             JellyfinPlaylist(id=item["Id"], name=item.get("Name", ""))
             for item in items
@@ -112,6 +109,19 @@ class JellyfinClient:
 
     def delete_playlist(self, playlist_id: str) -> None:
         self._delete(f"/Items/{playlist_id}")
+
+    def _get_all_items(self, path: str, params: dict[str, str]) -> list[dict]:
+        page_size = 500
+        start_index = 0
+        all_items: list[dict] = []
+        while True:
+            payload = self._get(path, {**params, "Limit": str(page_size), "StartIndex": str(start_index)})
+            page = payload.get("Items", [])
+            all_items.extend(page)
+            if len(all_items) >= payload.get("TotalRecordCount", len(all_items)) or not page:
+                break
+            start_index += len(page)
+        return all_items
 
     def _get(self, path: str, params: dict[str, str]) -> dict:
         url = f"{self.base_url}{path}"
