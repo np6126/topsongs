@@ -139,6 +139,7 @@ class Planner:
         eligible_count = 0
         planned_count = 0
         planned_playlist_names: set[str] = set()
+        planned_playlist_owners: dict[str, str] = {}
         user_notes: list[str] = []
         failed_artist_count = 0
         artist_plans: list[ArtistPlan] = []
@@ -146,6 +147,25 @@ class Planner:
         for artist in artists:
             if not self._artist_filter.matches(artist.name):
                 continue
+
+            expected_name = self._playlist_name(artist.name)
+            if expected_name in planned_playlist_owners:
+                logger.warning(
+                    "event=playlist_name_collision user=%s playlist=%s "
+                    "first_artist=%s second_artist=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(expected_name),
+                    sanitize_untrusted_text(planned_playlist_owners[expected_name]),
+                    sanitize_untrusted_text(artist.name),
+                )
+                plan = self._initial_artist_plan(artist.name, 0, False)
+                plan.notes.append(
+                    f"Playlist name collision: '{expected_name}' already claimed by "
+                    f"'{planned_playlist_owners[expected_name]}' after name sanitization."
+                )
+                artist_plans.append(plan)
+                continue
+
             try:
                 plan = self._plan_for_artist(user, artist, existing_playlists)
             except Exception as exc:
@@ -157,12 +177,16 @@ class Planner:
                     exc,
                 )
                 plan = self._failed_artist_plan(artist.name, exc)
+                # Preserve the existing playlist so it isn't treated as orphaned
+                if expected_name in existing_playlists:
+                    planned_playlist_names.add(expected_name)
 
             if plan.eligible:
                 eligible_count += 1
             if plan.playlist_plan:
                 planned_count += 1
                 planned_playlist_names.add(plan.playlist_plan.playlist_name)
+                planned_playlist_owners[plan.playlist_plan.playlist_name] = artist.name
             artist_plans.append(plan)
 
         orphan_deleted_count = self._delete_orphan_playlists(
@@ -372,33 +396,41 @@ class Planner:
         item_ids = [match.jellyfin_item_id for match in matches]
         planned_tracks = self._build_planned_tracks(matches)
         existing_playlist = existing_playlists.get(playlist_name)
-        created_playlist_id = self.jellyfin.create_playlist(user.id, playlist_name, item_ids)
-        deleted_playlist_id = None
-        action = "created"
+        action: str = "replaced" if existing_playlist is not None else "created"
+        deleted_playlist_id: str | None = existing_playlist.id if existing_playlist else None
 
-        if existing_playlist is not None:
-            action = "replaced"
-            deleted_playlist_id = existing_playlist.id
-            try:
-                self.jellyfin.delete_playlist(existing_playlist.id)
-                logger.info(
-                    "event=playlist_deleted user=%s playlist=%s playlist_id=%s",
-                    sanitize_untrusted_text(user.name),
-                    sanitize_untrusted_text(playlist_name),
-                    existing_playlist.id,
-                )
-            except Exception as exc:
-                notes.append(
-                    f"Created replacement playlist {created_playlist_id}, but failed "
-                    f"to delete previous playlist {existing_playlist.id}: {exc}"
-                )
-                logger.exception(
-                    "event=playlist_delete_failed user=%s playlist=%s old_id=%s error=%s",
-                    sanitize_untrusted_text(user.name),
-                    sanitize_untrusted_text(playlist_name),
-                    existing_playlist.id,
-                    exc,
-                )
+        if self.settings.dry_run:
+            logger.info(
+                "event=dry_run_playlist user=%s playlist=%s action=%s tracks=%s",
+                sanitize_untrusted_text(user.name),
+                sanitize_untrusted_text(playlist_name),
+                action,
+                len(item_ids),
+            )
+            created_playlist_id = "dry-run"
+        else:
+            created_playlist_id = self.jellyfin.create_playlist(user.id, playlist_name, item_ids)
+            if existing_playlist is not None:
+                try:
+                    self.jellyfin.delete_playlist(existing_playlist.id)
+                    logger.info(
+                        "event=playlist_deleted user=%s playlist=%s playlist_id=%s",
+                        sanitize_untrusted_text(user.name),
+                        sanitize_untrusted_text(playlist_name),
+                        existing_playlist.id,
+                    )
+                except Exception as exc:
+                    notes.append(
+                        f"Created replacement playlist {created_playlist_id}, but failed "
+                        f"to delete previous playlist {existing_playlist.id}: {exc}"
+                    )
+                    logger.exception(
+                        "event=playlist_delete_failed user=%s playlist=%s old_id=%s error=%s",
+                        sanitize_untrusted_text(user.name),
+                        sanitize_untrusted_text(playlist_name),
+                        existing_playlist.id,
+                        exc,
+                    )
 
         playlist_plan = PlaylistPlan(
             user_id=user.id,
@@ -436,6 +468,14 @@ class Planner:
             if not self._is_managed_playlist_name(playlist_name):
                 continue
             if playlist_name in planned_playlist_names:
+                continue
+            if self.settings.dry_run:
+                logger.info(
+                    "event=dry_run_orphan_skip user=%s playlist=%s playlist_id=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(playlist_name),
+                    playlist.id,
+                )
                 continue
             try:
                 self.jellyfin.delete_playlist(playlist.id)

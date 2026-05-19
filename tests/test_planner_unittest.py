@@ -24,6 +24,7 @@ class SettingsStub:
     min_track_duration_seconds = 60
     playlist_name_prefix = "Top Songs - "
     append_unmatched_songs = True
+    dry_run = False
 
 
 class LibraryPathFilterTests(unittest.TestCase):
@@ -400,6 +401,155 @@ class LibraryPathFilterTests(unittest.TestCase):
             "Failed to delete orphan playlist p1 (Top Songs - Powerwolf): delete failed",
             user_plan.notes,
         )
+
+
+    def test_failed_artist_preserves_existing_playlist_from_orphan_deletion(self) -> None:
+        """Fix 1: playlist must not be orphan-deleted when the artist's processing fails."""
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted_ids: list[str] = []
+
+            def get_artists(self, user_id):
+                return [JellyfinArtist(id="a1", name="Powerwolf")]
+
+            def get_playlists_for_user(self, user_id):
+                return [JellyfinPlaylist(id="p1", name="Top Songs - Powerwolf")]
+
+            def get_tracks_for_artist(self, user_id, artist):
+                raise RuntimeError("last.fm unreachable")
+
+            def delete_playlist(self, playlist_id):
+                self.deleted_ids.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        jellyfin = JellyfinStub()
+        planner = Planner(SettingsStub(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.failed_artist_count, 1)
+        self.assertEqual(user_plan.orphan_deleted_count, 0)
+        self.assertEqual(jellyfin.deleted_ids, [])
+
+    def test_playlist_name_collision_skips_second_artist(self) -> None:
+        """Fix 6: artists that sanitize to the same playlist name must not clobber each other."""
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.created: list[str] = []
+
+            def get_artists(self, user_id):
+                return [
+                    JellyfinArtist(id="a1", name="A/B"),
+                    JellyfinArtist(id="a2", name="A_B"),
+                ]
+
+            def get_playlists_for_user(self, user_id):
+                return []
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id=f"{artist.id}-{i}", name=f"song{i}", path=f"/music/s{i}.flac")
+                    for i in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                self.created.append(playlist_name)
+                return "new-id"
+
+            def delete_playlist(self, playlist_id):
+                pass
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        jellyfin = JellyfinStub()
+        planner = Planner(SettingsStub(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.planned_playlist_count, 1)
+        self.assertEqual(len(jellyfin.created), 1)
+        second = next(p for p in user_plan.artists if p.artist == "A_B")
+        self.assertTrue(any("collision" in n for n in second.notes))
+
+    def test_dry_run_skips_create_and_delete(self) -> None:
+        """Fix 5: dry_run=True must not call create_playlist or delete_playlist."""
+
+        class DryRunSettings(SettingsStub):
+            dry_run = True
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.created: list[str] = []
+                self.deleted: list[str] = []
+
+            def get_artists(self, user_id):
+                return [JellyfinArtist(id="a1", name="Powerwolf")]
+
+            def get_playlists_for_user(self, user_id):
+                return [JellyfinPlaylist(id="p-old", name="Top Songs - Powerwolf")]
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id=str(i), name=f"song{i}", path=f"/music/s{i}.flac")
+                    for i in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                self.created.append(playlist_name)
+                return "new-id"
+
+            def delete_playlist(self, playlist_id):
+                self.deleted.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        jellyfin = JellyfinStub()
+        planner = Planner(DryRunSettings(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(jellyfin.created, [])
+        self.assertEqual(jellyfin.deleted, [])
+        self.assertEqual(user_plan.planned_playlist_count, 1)
+        self.assertEqual(user_plan.orphan_deleted_count, 0)
+
+    def test_dry_run_skips_orphan_deletion(self) -> None:
+        """Fix 5: orphan playlists must not be deleted in dry_run mode."""
+
+        class DryRunSettings(SettingsStub):
+            dry_run = True
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_artists(self, user_id):
+                return []
+
+            def get_playlists_for_user(self, user_id):
+                return [JellyfinPlaylist(id="p1", name="Top Songs - Gone")]
+
+            def delete_playlist(self, playlist_id):
+                self.deleted.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        jellyfin = JellyfinStub()
+        planner = Planner(DryRunSettings(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(jellyfin.deleted, [])
+        self.assertEqual(user_plan.orphan_deleted_count, 0)
 
 
 if __name__ == "__main__":

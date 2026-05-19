@@ -102,6 +102,7 @@ RUN_ON_STARTUP=false
 | `MAX_PROVIDER_TRACKS` | no | `200` | Maximum Last.fm top tracks to fetch and consider per artist. |
 | `PLAYLIST_NAME_PREFIX` | no | `Top Songs - ` | Prefix used for managed playlist names such as `Top Songs - Powerwolf`. Only playlists with this prefix are considered managed and eligible for cleanup. |
 | `APPEND_UNMATCHED_SONGS` | no | `true` | Whether local tracks missing from the provider top list are appended to the end of generated playlists. Set to `false` to keep playlists limited to provider matches. |
+| `DRY_RUN` | no | `false` | Set to `true` to simulate a run without creating or deleting any playlists. All planned actions are logged but no changes are written to Jellyfin. |
 | `ARTIST_ALLOWLIST` | no | empty | Comma-separated artist names to include. Empty means all artists. |
 | `ARTIST_DENYLIST` | no | empty | Comma-separated artist names to exclude. |
 | `USER_ALLOWLIST` | no | empty | Comma-separated Jellyfin user names to include. Empty means all enabled users. |
