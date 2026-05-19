@@ -13,3 +13,4 @@ dist/
 state/
 appdata/.env
 appdata/state/
+appdata/restart.py
