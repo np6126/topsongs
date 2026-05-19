@@ -17,9 +17,9 @@ For each target Jellyfin user, `topsongs`:
 2. Skips artists with `MIN_TRACKS_PER_ARTIST` or fewer local songs.
 3. Fetches Last.fm top tracks for each eligible artist.
 4. Matches Last.fm track titles conservatively against local Jellyfin tracks.
-5. Creates a fresh `<PLAYLIST_NAME_PREFIX><Artist>` playlist in matched Last.fm rank order. Characters that are invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in the artist part of the playlist name, so `AC/DC` becomes `Top Songs - AC_DC`.
-6. Removes an older playlist with the same name after the replacement is created.
-7. Deletes managed playlists with the configured prefix when they are no longer planned in the current run.
+5. Creates a fresh `<PLAYLIST_NAME_PREFIX><Artist>` playlist in matched Last.fm rank order. Characters that are invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in the artist part of the playlist name, so `AC/DC` becomes `Top Songs - AC_DC`. If two artists would produce the same sanitized name, the second is skipped with a warning.
+6. Removes the older playlist with the same name after the replacement is created (create-new then remove-old, not in-place mutation).
+7. Deletes managed playlists with the configured prefix when they are no longer planned in the current run. Playlists belonging to artists that failed in the current run are preserved to avoid data loss on transient errors.
 8. Writes a compact run summary and detailed container logs.
 
 The Jellyfin API key must be able to read users, read music items, create
@@ -36,7 +36,7 @@ playlists, and delete managed playlists.
 ## Repository Layout
 
 ```text
-top_songs/
+.
   Dockerfile
   README.md
   LICENSE
@@ -76,6 +76,7 @@ RETRY_BACKOFF_SECONDS=1.0
 MAX_PROVIDER_TRACKS=200
 PLAYLIST_NAME_PREFIX=Top Songs - 
 APPEND_UNMATCHED_SONGS=true
+DRY_RUN=false
 ARTIST_ALLOWLIST=
 ARTIST_DENYLIST=
 USER_ALLOWLIST=
@@ -194,8 +195,11 @@ STATE_DIR/last_run.txt
 The summary contains start and finish times, provider name, user and artist
 counts, playlist counts, failure counts, and local unmatched counts. Local
 tracks missing from the provider list are reported once per artist and title,
-independent of how many users saw the same track. Parallel runs are prevented by
-a lockfile in `STATE_DIR`.
+independent of how many users saw the same track.
+
+Parallel runs are prevented by a lockfile in `STATE_DIR`. Lock files older than
+2 hours are automatically cleared on the next run to recover from unexpected
+process termination (e.g. SIGKILL).
 
 Detailed output is written to container logs, including match counts, local
 tracks not present in the provider list, and the ordered track list for each
@@ -231,10 +235,3 @@ Sensitive or private data may appear in:
 
 If an API key is accidentally published, revoke or rotate it before continuing
 to use the project publicly.
-
-## Current Scope
-
-- No direct music library filesystem access is required.
-- Matching is intentionally conservative.
-- Playlist replacement is create-new then remove-old, not in-place mutation.
-- Managed playlists are identified by `PLAYLIST_NAME_PREFIX`; managed playlists not planned in the current run are deleted.
