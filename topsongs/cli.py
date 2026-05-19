@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -18,13 +19,34 @@ from .sanitize import sanitize_untrusted_text
 logger = logging.getLogger(__name__)
 
 
+_STALE_LOCK_SECONDS = 7200  # 2 hours
+
+
 class RunAlreadyActiveError(RuntimeError):
     pass
+
+
+def _maybe_clear_stale_lock(lock_path: Path) -> None:
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except FileNotFoundError:
+        return
+    if age > _STALE_LOCK_SECONDS:
+        try:
+            lock_path.unlink()
+            logger.warning(
+                "event=stale_lock_cleared age_seconds=%.0f lock_path=%s",
+                age,
+                lock_path,
+            )
+        except FileNotFoundError:
+            pass
 
 
 @contextmanager
 def acquire_run_lock(state_dir: Path):
     lock_path = state_dir / ".run.lock"
+    _maybe_clear_stale_lock(lock_path)
     fd: int | None = None
     acquired = False
     try:
@@ -53,8 +75,10 @@ def main() -> int:
     settings = Settings()
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(settings.log_level)
-    logger.info("event=start state_dir=%s", settings.state_dir)
+    logger.info("event=start state_dir=%s dry_run=%s", settings.state_dir, settings.dry_run)
 
+    run_failed = False
+    report = RunReport.empty(provider="unknown")
     try:
         with acquire_run_lock(settings.state_dir):
             jellyfin = JellyfinClient(
@@ -76,6 +100,9 @@ def main() -> int:
     except RunAlreadyActiveError as exc:
         logger.warning("event=skip reason=run_lock error=%s", exc)
         return 0
+    except Exception as exc:
+        logger.exception("event=run_failed error=%s", exc)
+        run_failed = True
 
     reporter = Reporter(settings.state_dir)
     last_run_path = reporter.write(report)
@@ -97,6 +124,9 @@ def main() -> int:
         report.unmatched_local_track_count,
     )
     _log_unmatched_summary(report)
+
+    if run_failed or report.failed_user_count or report.failed_artist_count:
+        return 1
     return 0
 
 

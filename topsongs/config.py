@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     max_provider_tracks: int = Field(default=200, alias="MAX_PROVIDER_TRACKS")
     playlist_name_prefix: str = Field(default="Top Songs - ", alias="PLAYLIST_NAME_PREFIX")
     append_unmatched_songs: bool = Field(default=True, alias="APPEND_UNMATCHED_SONGS")
+    dry_run: bool = Field(default=False, alias="DRY_RUN")
 
     artist_allowlist: CsvList = Field(default_factory=list, alias="ARTIST_ALLOWLIST")
     artist_denylist: CsvList = Field(default_factory=list, alias="ARTIST_DENYLIST")
