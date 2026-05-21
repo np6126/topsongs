@@ -107,6 +107,55 @@ class UserPlan(BaseModel):
     error: str | None = None
 
 
+class DiscographyAlbum(BaseModel):
+    title: str
+    mbid: str | None = None
+    year: int | None = None
+    playcount: int | None = None
+    tracks: list[str] = Field(default_factory=list)
+
+
+class Discography(BaseModel):
+    artist_name: str
+    albums: list[DiscographyAlbum] = Field(default_factory=list)
+
+
+class AlbumGap(BaseModel):
+    title: str
+    year: int | None = None
+    total_tracks: int = 0
+    owned_count: int = 0
+    missing_titles: list[str] = Field(default_factory=list)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.total_tracks > 0 and self.owned_count >= self.total_tracks
+
+    @property
+    def coverage(self) -> float:
+        if self.total_tracks == 0:
+            return 1.0
+        return self.owned_count / self.total_tracks
+
+
+class ArtistGap(BaseModel):
+    artist_name: str
+    albums: list[AlbumGap] = Field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def total_tracks(self) -> int:
+        return sum(album.total_tracks for album in self.albums)
+
+    @property
+    def owned_tracks(self) -> int:
+        return sum(album.owned_count for album in self.albums)
+
+    @property
+    def complete_album_count(self) -> int:
+        return sum(1 for album in self.albums if album.is_complete)
+
+
 class RunReport(BaseModel):
     started_at: datetime
     finished_at: datetime

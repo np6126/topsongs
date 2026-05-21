@@ -44,6 +44,7 @@ playlists, and delete managed playlists.
     .env.example
     docker-compose.yml
     run-topsongs
+    topsongs-missing
   scripts/
     container-entrypoint.sh
   topsongs/
@@ -184,6 +185,48 @@ Build the Docker image from the repository root:
 docker build -t topsongs:dev .
 ```
 
+## Finding Missing Songs
+
+`topsongs-missing` reports which tracks of an artist are absent from the
+Jellyfin library, grouped by album. It compares the local library against each
+artist's Last.fm discography and prints a structured, colored console report.
+
+Check a single artist:
+
+```bash
+topsongs-missing "Metallica"
+```
+
+Check every artist in the library:
+
+```bash
+topsongs-missing
+```
+
+In a Docker Compose deployment, run it inside the container with the
+`appdata/topsongs-missing` wrapper:
+
+```bash
+cd appdata
+./topsongs-missing "Metallica"
+```
+
+| Option | Purpose |
+| --- | --- |
+| `--user <name>` | Jellyfin user whose library is inspected. Defaults to the first enabled user. |
+| `--all-types` | Also include compilations and live albums. They are excluded by default; studio albums, EPs and singles are always shown. |
+| `--no-cache` | Ignore the cached discography and fetch fresh data from Last.fm. |
+
+It reuses `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `LASTFM_API_KEY` and the
+allowlist/denylist settings from the same configuration. Last.fm exposes no
+release-type or release-date metadata, so compilations and live albums are
+detected by name, edition variants (`Deluxe`, `Remastered`, ...) are merged,
+and no release years are shown. Last.fm's crowd-sourced data sometimes contains
+misspelled duplicates; a track that differs from one you own by a
+single-character typo is still counted as owned. Fetched discographies are
+cached for 30 days under `STATE_DIR/discography_cache/` to keep repeated runs
+fast and easy on the Last.fm API.
+
 ## Runtime Files and Logs
 
 `topsongs` writes a compact summary to:
@@ -214,6 +257,9 @@ applied playlist.
   `appdata/state` to `/app/state`, and builds from `PROJECT_ROOT`.
 - `appdata/run-topsongs` runs one manual refresh inside the already-running
   Compose container. Use it for first-run checks, debugging, or one-off updates.
+- `appdata/topsongs-missing` runs the missing-songs report inside the
+  already-running Compose container. It forwards all arguments, e.g.
+  `./topsongs-missing "Metallica"`.
 - `scripts/container-entrypoint.sh` is used inside the container. It exports the
   configured environment for cron, installs the cron schedule, optionally runs
   once on startup, and keeps cron running in the foreground.

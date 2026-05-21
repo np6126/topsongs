@@ -115,7 +115,10 @@ class JellyfinClient:
         start_index = 0
         all_items: list[dict] = []
         while True:
-            payload = self._get(path, {**params, "Limit": str(page_size), "StartIndex": str(start_index)})
+            payload = self._get(
+                path,
+                {**params, "Limit": str(page_size), "StartIndex": str(start_index)},
+            )
             page = payload.get("Items", [])
             all_items.extend(page)
             if len(all_items) >= payload.get("TotalRecordCount", len(all_items)) or not page:
