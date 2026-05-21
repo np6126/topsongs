@@ -8,28 +8,12 @@ python - <<'PY' > "$CRON_ENV"
 import os
 import shlex
 
-keys = [
-    "JELLYFIN_URL",
-    "JELLYFIN_API_KEY",
-    "LASTFM_API_KEY",
-    "MIN_TRACKS_PER_ARTIST",
-    "MIN_TRACK_DURATION_SECONDS",
-    "STATE_DIR",
-    "LOG_LEVEL",
-    "REQUEST_TIMEOUT_SECONDS",
-    "REQUEST_MAX_RETRIES",
-    "RETRY_BACKOFF_SECONDS",
-    "MAX_PROVIDER_TRACKS",
-    "APPEND_UNMATCHED_SONGS",
-    "ARTIST_ALLOWLIST",
-    "ARTIST_DENYLIST",
-    "USER_ALLOWLIST",
-    "USER_DENYLIST",
-    "LIBRARY_PATH_ALLOWLIST",
-    "LIBRARY_PATH_DENYLIST",
-]
+from topsongs.config import Settings
 
-for key in keys:
+# Export exactly the variables topsongs reads, derived from the settings model
+# so this never goes stale when a new setting is added.
+for name, field in Settings.model_fields.items():
+    key = field.alias or name.upper()
     if key in os.environ:
         print(f"export {key}={shlex.quote(os.environ[key])}")
 PY
