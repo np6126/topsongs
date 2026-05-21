@@ -81,7 +81,7 @@ JELLYFIN_API_KEY=replace_me
 LASTFM_API_KEY=replace_me
 MIN_TRACKS_PER_ARTIST=10
 MIN_TRACK_DURATION_SECONDS=60
-STATE_DIR=/app/state
+STATE_DIR=./state
 LOG_LEVEL=INFO
 REQUEST_TIMEOUT_SECONDS=20
 REQUEST_MAX_RETRIES=2
@@ -119,7 +119,7 @@ Characters invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in t
 | `LASTFM_API_KEY` | yes | none | Last.fm API key used to fetch artist top tracks. |
 | `MIN_TRACKS_PER_ARTIST` | no | `10` | Artists must have more local tracks than this value to be processed. |
 | `MIN_TRACK_DURATION_SECONDS` | no | `60` | Local tracks shorter than this are excluded from matching and playlists. Set to `0` to disable duration filtering. |
-| `STATE_DIR` | no | `/app/state` | Directory for runtime files such as `last_run.txt` and the lockfile. |
+| `STATE_DIR` | no | `./state` | Directory for runtime files such as `last_run.txt` and the lockfile, relative to the working directory. |
 | `LOG_LEVEL` | no | `INFO` | Python logging level. Raise to `DEBUG` for per-request and per-track detail. |
 | `REQUEST_TIMEOUT_SECONDS` | no | `20` | HTTP timeout for Jellyfin and Last.fm requests. |
 | `REQUEST_MAX_RETRIES` | no | `2` | Retry count for retryable network and server errors. |
@@ -213,6 +213,11 @@ cd appdata
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
+```
+
+`topsongs` reads its configuration from `appdata/.env`. Create it first (see [Configuration](#configuration)), then run a refresh:
+
+```bash
 topsongs
 ```
 

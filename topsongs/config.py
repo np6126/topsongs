@@ -8,10 +8,16 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 CsvList = Annotated[list[str], NoDecode]
 
+# Resolve appdata/.env relative to the repository so `topsongs` finds the same
+# config file regardless of the working directory it is invoked from. In the
+# container the package is installed elsewhere and this path does not exist;
+# config there comes from environment variables exported by the entrypoint.
+_ENV_FILE = Path(__file__).resolve().parent.parent / "appdata" / ".env"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         env_ignore_empty=True,
@@ -23,7 +29,7 @@ class Settings(BaseSettings):
 
     min_tracks_per_artist: int = Field(default=10, alias="MIN_TRACKS_PER_ARTIST")
     min_track_duration_seconds: int = Field(default=60, alias="MIN_TRACK_DURATION_SECONDS")
-    state_dir: Path = Field(default=Path("/app/state"), alias="STATE_DIR")
+    state_dir: Path = Field(default=Path("state"), alias="STATE_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     request_timeout_seconds: float = Field(default=20.0, alias="REQUEST_TIMEOUT_SECONDS")
     request_max_retries: int = Field(default=2, alias="REQUEST_MAX_RETRIES")
