@@ -17,6 +17,7 @@ def test_main_passes_max_tracks_only_to_lastfm_provider(monkeypatch, tmp_path) -
         request_timeout_seconds = 20
         request_max_retries = 2
         retry_backoff_seconds = 1.0
+        min_request_interval = 0.0
         max_provider_tracks = 75
         state_dir = tmp_path
         log_level = "INFO"
@@ -26,11 +27,23 @@ def test_main_passes_max_tracks_only_to_lastfm_provider(monkeypatch, tmp_path) -
         def __init__(self, **kwargs) -> None:
             jellyfin_kwargs.update(kwargs)
 
+        def __enter__(self) -> "JellyfinClientStub":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
     class LastFmProviderStub:
         name = "lastfm"
 
         def __init__(self, **kwargs) -> None:
             lastfm_kwargs.update(kwargs)
+
+        def __enter__(self) -> "LastFmProviderStub":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
 
     class PlannerStub:
         def __init__(self, settings, jellyfin, provider) -> None:
@@ -132,6 +145,7 @@ def test_main_returns_nonzero_when_artists_failed(monkeypatch, tmp_path) -> None
         request_timeout_seconds = 20
         request_max_retries = 2
         retry_backoff_seconds = 1.0
+        min_request_interval = 0.0
         max_provider_tracks = 75
         state_dir = tmp_path
         log_level = "INFO"
@@ -175,6 +189,7 @@ def test_main_writes_report_and_returns_nonzero_when_planner_raises(monkeypatch,
         request_timeout_seconds = 20
         request_max_retries = 2
         retry_backoff_seconds = 1.0
+        min_request_interval = 0.0
         max_provider_tracks = 75
         state_dir = tmp_path
         log_level = "INFO"

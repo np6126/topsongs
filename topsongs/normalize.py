@@ -3,6 +3,24 @@ from __future__ import annotations
 import re
 import unicodedata
 
+# Parenthesized/bracketed tags that mark an alternate take of the *same song*
+# (a different version, format, or mix). Stripping them lets an alt-version
+# title normalize onto its base title so duplicates collapse and lone alt
+# versions still match the provider's studio rank.
+_ALT_VERSION_TAGS = (
+    r"[^()\[\]]*version",
+    r"orchestral[^()\[\]]*",
+    r"acoustic[^()\[\]]*",
+    r"demo[^()\[\]]*",
+    r"instrumental[^()\[\]]*",
+    r"[^()\[\]]*remix",
+    r"[^()\[\]]*\bmix",
+    r"[^()\[\]]*\bedit",
+    r"bonus track[^()\[\]]*",
+    r"re-?recorded[^()\[\]]*",
+    r"reprise",
+)
+
 STRIP_PATTERNS = [
     r"\(.*?remaster.*?\)",
     r"\[.*?remaster.*?\]",
@@ -12,6 +30,8 @@ STRIP_PATTERNS = [
     r"\[feat\.? .*?\]",
     r"\(ft\.? .*?\)",
     r"\[ft\.? .*?\]",
+    *[rf"\((?:{tag})\)" for tag in _ALT_VERSION_TAGS],
+    *[rf"\[(?:{tag})\]" for tag in _ALT_VERSION_TAGS],
     r"\s-\sremaster(?:ed)?(?:\s\d+)?",
     r"\s-\slive.*$",
     r"\s-\sradio edit$",

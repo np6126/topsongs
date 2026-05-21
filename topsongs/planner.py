@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from .config import Settings
 from .filters import LibraryPathFilter, NameFilter, UserFilter
@@ -9,6 +12,7 @@ from .jellyfin import JellyfinClient
 from .matcher import match_tracks
 from .models import (
     ArtistPlan,
+    JellyfinArtist,
     JellyfinPlaylist,
     JellyfinTrack,
     JellyfinUser,
@@ -22,9 +26,16 @@ from .models import (
 from .normalize import normalize_name
 from .providers.base import TopSongsProvider
 from .providers.lastfm import LastFmError, LastFmNoTopTracksError, LastFmRateLimitError
+from .ranking import rerank_matches
 from .sanitize import sanitize_for_filename, sanitize_untrusted_text
 
 logger = logging.getLogger(__name__)
+
+
+class _ArtistCounts(NamedTuple):
+    eligible: int
+    planned: int
+    failed: int
 
 
 class Planner:
@@ -34,6 +45,8 @@ class Planner:
         jellyfin: JellyfinClient,
         provider: TopSongsProvider,
     ) -> None:
+        # jellyfin and provider are borrowed: the caller (cli.main) owns their
+        # HTTP clients and closes them; the Planner must not close them itself.
         self.settings = settings
         self.jellyfin = jellyfin
         self.provider = provider
@@ -44,6 +57,7 @@ class Planner:
             settings.library_path_denylist,
         )
         self._provider_track_cache: dict[str, list[ProviderTrack] | Exception] = {}
+        self._cache_lock = threading.Lock()
 
     def run(self) -> RunReport:
         started_at = datetime.now(timezone.utc)
@@ -132,63 +146,39 @@ class Planner:
 
     def _plan_for_user(self, user: JellyfinUser) -> UserPlan:
         artists = self.jellyfin.get_artists(user.id)
+        # Built once, then read-only while the pool runs: worker tasks only
+        # .get() from it. _delete_orphan_playlists mutates it (del), which is
+        # safe only because that step runs strictly after the pool has joined.
         existing_playlists = {
             playlist.name: playlist
             for playlist in self.jellyfin.get_playlists_for_user(user.id)
         }
-        eligible_count = 0
-        planned_count = 0
-        planned_playlist_names: set[str] = set()
-        planned_playlist_owners: dict[str, str] = {}
+        filtered = [artist for artist in artists if self._artist_filter.matches(artist.name)]
+        runnable, collision_plans, protected_names = self._resolve_collisions(
+            user, filtered, existing_playlists
+        )
+
+        computed: dict[int, ArtistPlan] = {}
+        with ThreadPoolExecutor(max_workers=self.settings.run_concurrency) as executor:
+            futures: dict[Future, int] = {
+                executor.submit(
+                    self._plan_for_artist_safe, user, artist, existing_playlists
+                ): index
+                for index, artist in runnable
+            }
+            for future in as_completed(futures):
+                computed[futures[future]] = future.result()
+
+        by_index = {**collision_plans, **computed}
+        # A lost future would silently drop an artist; fail loudly instead.
+        assert len(by_index) == len(filtered)
+        artist_plans = [by_index[index] for index in range(len(filtered))]
+
+        counts, planned_playlist_names = self._aggregate_artist_plans(
+            artist_plans, existing_playlists, protected_names
+        )
+
         user_notes: list[str] = []
-        failed_artist_count = 0
-        artist_plans: list[ArtistPlan] = []
-
-        for artist in artists:
-            if not self._artist_filter.matches(artist.name):
-                continue
-
-            expected_name = self._playlist_name(artist.name)
-            if expected_name in planned_playlist_owners:
-                logger.warning(
-                    "event=playlist_name_collision user=%s playlist=%s "
-                    "first_artist=%s second_artist=%s",
-                    sanitize_untrusted_text(user.name),
-                    sanitize_untrusted_text(expected_name),
-                    sanitize_untrusted_text(planned_playlist_owners[expected_name]),
-                    sanitize_untrusted_text(artist.name),
-                )
-                plan = self._initial_artist_plan(artist.name, 0, False)
-                plan.notes.append(
-                    f"Playlist name collision: '{expected_name}' already claimed by "
-                    f"'{planned_playlist_owners[expected_name]}' after name sanitization."
-                )
-                artist_plans.append(plan)
-                continue
-
-            try:
-                plan = self._plan_for_artist(user, artist, existing_playlists)
-            except Exception as exc:
-                failed_artist_count += 1
-                logger.exception(
-                    "event=artist_failed user=%s artist=%s error=%s",
-                    sanitize_untrusted_text(user.name),
-                    sanitize_untrusted_text(artist.name),
-                    exc,
-                )
-                plan = self._failed_artist_plan(artist.name, exc)
-                # Preserve the existing playlist so it isn't treated as orphaned
-                if expected_name in existing_playlists:
-                    planned_playlist_names.add(expected_name)
-
-            if plan.eligible:
-                eligible_count += 1
-            if plan.playlist_plan:
-                planned_count += 1
-                planned_playlist_names.add(plan.playlist_plan.playlist_name)
-                planned_playlist_owners[plan.playlist_plan.playlist_name] = artist.name
-            artist_plans.append(plan)
-
         orphan_deleted_count = self._delete_orphan_playlists(
             user=user,
             existing_playlists=existing_playlists,
@@ -201,13 +191,117 @@ class Planner:
             user_name=user.name,
             is_administrator=user.policy.is_administrator,
             artist_count_seen=len(artists),
-            eligible_artist_count=eligible_count,
-            planned_playlist_count=planned_count,
+            eligible_artist_count=counts.eligible,
+            planned_playlist_count=counts.planned,
             orphan_deleted_count=orphan_deleted_count,
-            failed_artist_count=failed_artist_count,
+            failed_artist_count=counts.failed,
             artists=artist_plans,
             notes=user_notes,
         )
+
+    def _resolve_collisions(
+        self,
+        user: JellyfinUser,
+        filtered_artists: list[JellyfinArtist],
+        existing_playlists: dict[str, JellyfinPlaylist],
+    ) -> tuple[list[tuple[int, JellyfinArtist]], dict[int, ArtistPlan], set[str]]:
+        """Claim playlist names up front, in artist order, before the pool runs.
+
+        Two artists can sanitize to the same playlist name. Deciding the winner
+        here — rather than dynamically as playlists are created — keeps the
+        outcome deterministic under concurrency: the first artist in
+        get_artists() order claims the name. The name is derived with the same
+        _playlist_name() call _apply_playlist_plan uses, so no two pool tasks
+        ever target the same playlist.
+        """
+        runnable: list[tuple[int, JellyfinArtist]] = []
+        collision_plans: dict[int, ArtistPlan] = {}
+        protected_names: set[str] = set()
+        claimed_by: dict[str, str] = {}
+        for index, artist in enumerate(filtered_artists):
+            expected_name = self._playlist_name(artist.name)
+            if expected_name in claimed_by:
+                logger.warning(
+                    "event=playlist_name_collision user=%s playlist=%s "
+                    "first_artist=%s second_artist=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(expected_name),
+                    sanitize_untrusted_text(claimed_by[expected_name]),
+                    sanitize_untrusted_text(artist.name),
+                )
+                plan = self._initial_artist_plan(artist.name, 0, False)
+                plan.notes.append(
+                    f"Playlist name collision: '{expected_name}' already claimed by "
+                    f"'{claimed_by[expected_name]}' after name sanitization."
+                )
+                collision_plans[index] = plan
+                # The collision winner may not produce a playlist, so an
+                # existing playlist of this name is shielded from orphan
+                # deletion here regardless.
+                if expected_name in existing_playlists:
+                    protected_names.add(expected_name)
+                continue
+            claimed_by[expected_name] = artist.name
+            runnable.append((index, artist))
+        return runnable, collision_plans, protected_names
+
+    def _plan_for_artist_safe(
+        self,
+        user: JellyfinUser,
+        artist: JellyfinArtist,
+        existing_playlists: dict[str, JellyfinPlaylist],
+    ) -> ArtistPlan:
+        """Run _plan_for_artist so a pool task never raises.
+
+        future.result() would re-raise inside the orchestrator; catching here
+        keeps one artist's failure from aborting the others. KeyboardInterrupt
+        and SystemExit are BaseException and intentionally pass through.
+        """
+        try:
+            return self._plan_for_artist(user, artist, existing_playlists)
+        except Exception as exc:
+            logger.exception(
+                "event=artist_failed user=%s artist=%s error=%s",
+                sanitize_untrusted_text(user.name),
+                sanitize_untrusted_text(artist.name),
+                exc,
+            )
+            return self._failed_artist_plan(artist.name, exc)
+
+    def _aggregate_artist_plans(
+        self,
+        artist_plans: list[ArtistPlan],
+        existing_playlists: dict[str, JellyfinPlaylist],
+        protected_names: set[str],
+    ) -> tuple[_ArtistCounts, set[str]]:
+        """Sequential post-pass over the ordered plans.
+
+        Tallies the report counts and collects every playlist name that must
+        survive orphan cleanup. Runs after the pool join, so its writes to
+        existing_playlists are single-threaded.
+        """
+        eligible = 0
+        planned = 0
+        failed = 0
+        planned_playlist_names: set[str] = set(protected_names)
+        for plan in artist_plans:
+            if plan.error is not None:
+                failed += 1
+                # Preserve a failed artist's existing playlist from orphan deletion.
+                existing_name = self._playlist_name(plan.artist)
+                if existing_name in existing_playlists:
+                    planned_playlist_names.add(existing_name)
+            if plan.eligible:
+                eligible += 1
+            if plan.playlist_plan is not None:
+                planned += 1
+                name = plan.playlist_plan.playlist_name
+                existing_playlists[name] = JellyfinPlaylist(
+                    id=plan.playlist_plan.created_playlist_id,
+                    name=name,
+                )
+                planned_playlist_names.add(name)
+        return _ArtistCounts(eligible, planned, failed), planned_playlist_names
 
     def _plan_for_artist(
         self,
@@ -280,13 +374,19 @@ class Planner:
 
         plan.provider_tracks = provider_tracks
 
-        matches, unmatched_local = match_tracks(provider_tracks, local_tracks)
+        matches, _ = match_tracks(provider_tracks, local_tracks)
+        matches = rerank_matches(matches, self.settings.personalization_weight)
         plan.matched_tracks = matches
-        plan.unmatched_local_tracks = unmatched_local
+
+        appended, duplicate_titles = self._build_unmatched_local_matches(
+            local_tracks, matches
+        )
+        plan.unmatched_local_tracks = [match.jellyfin_title for match in appended]
+        plan.duplicate_local_tracks = duplicate_titles
 
         playlist_tracks = list(matches)
         if self.settings.append_unmatched_songs:
-            playlist_tracks.extend(self._build_unmatched_local_matches(local_tracks, matches))
+            playlist_tracks.extend(appended)
         if playlist_tracks:
             plan.playlist_plan = self._apply_playlist_plan(
                 user=user,
@@ -302,13 +402,14 @@ class Planner:
 
         logger.info(
             "event=artist_done user=%s artist=%s local=%s provider_tracks=%s "
-            "matched=%s unmatched_local=%s applied=%s",
+            "matched=%s unmatched_local=%s duplicate_local=%s applied=%s",
             sanitize_untrusted_text(user.name),
             sanitize_untrusted_text(artist.name),
             local_count,
             len(provider_tracks),
             len(matches),
-            len(unmatched_local),
+            len(appended),
+            len(duplicate_titles),
             bool(plan.playlist_plan),
         )
         return plan
@@ -352,27 +453,57 @@ class Planner:
                 jellyfin_item_id=match.jellyfin_item_id,
                 match_type=match.match_type,
                 album=match.album,
+                play_count=match.play_count,
             )
             for index, match in enumerate(matches, start=1)
         ]
 
-    @staticmethod
     def _build_unmatched_local_matches(
+        self,
         local_tracks: list[JellyfinTrack],
         matches: list[TrackMatch],
-    ) -> list[TrackMatch]:
+    ) -> tuple[list[TrackMatch], list[str]]:
+        """Build the appended block of local tracks the provider did not rank.
+
+        Each song appears at most once per playlist: a local track is skipped
+        when its normalized title already appears among the matched tracks or an
+        already-appended track. Returns ``(appended, duplicates)`` — the
+        appended TrackMatches and the titles dropped as a copy of an
+        already-included song.
+        """
         matched_ids = {match.jellyfin_item_id for match in matches}
-        return [
-            TrackMatch(
-                provider_title=track.name,
-                jellyfin_item_id=track.id,
-                jellyfin_title=track.name,
-                match_type="unmatched_local",
-                album=track.album,
+        unmatched = [track for track in local_tracks if track.id not in matched_ids]
+        if self.settings.personalization_weight > 0.0:
+            # Surface the user's own heavy rotation: order the appended block by
+            # play count (favorites first on ties) instead of album order. The
+            # dedup loop below runs after this sort, so the most-played copy of
+            # a duplicated song is the one kept.
+            unmatched.sort(
+                key=lambda track: (track.play_count, track.is_favorite),
+                reverse=True,
             )
-            for track in local_tracks
-            if track.id not in matched_ids
-        ]
+
+        seen = {normalize_name(match.jellyfin_title) for match in matches}
+        appended: list[TrackMatch] = []
+        duplicates: list[str] = []
+        for track in unmatched:
+            normalized = normalize_name(track.name)
+            if normalized in seen:
+                duplicates.append(track.name)
+                continue
+            seen.add(normalized)
+            appended.append(
+                TrackMatch(
+                    provider_title=track.name,
+                    jellyfin_item_id=track.id,
+                    jellyfin_title=track.name,
+                    match_type="unmatched_local",
+                    album=track.album,
+                    play_count=track.play_count,
+                    is_favorite=track.is_favorite,
+                )
+            )
+        return appended, duplicates
 
     def _filter_short_tracks(self, tracks: list[JellyfinTrack]) -> list[JellyfinTrack]:
         min_duration_ticks = self.settings.min_track_duration_seconds * 10_000_000
@@ -442,10 +573,9 @@ class Planner:
             deleted_playlist_id=deleted_playlist_id,
             created_playlist_id=created_playlist_id,
         )
-        existing_playlists[playlist_name] = JellyfinPlaylist(
-            id=created_playlist_id,
-            name=playlist_name,
-        )
+        # existing_playlists is a read-only snapshot while the pool runs; the
+        # bookkeeping update for this new playlist happens in
+        # _aggregate_artist_plans, after the pool join.
         self._log_applied_playlist(
             user.name,
             playlist_name,
@@ -504,24 +634,31 @@ class Planner:
 
     def _get_provider_tracks(self, artist_name: str) -> list[ProviderTrack]:
         cache_key = self._provider_cache_key(artist_name)
-        cached = self._provider_track_cache.get(cache_key)
-        if isinstance(cached, Exception):
-            raise cached
+        with self._cache_lock:
+            cached = self._provider_track_cache.get(cache_key)
         if cached is not None:
+            if isinstance(cached, Exception):
+                raise cached
             logger.debug(
                 "event=provider_cache_hit provider=lastfm artist=%s",
                 sanitize_untrusted_text(artist_name),
             )
             return cached
 
+        # The network call runs outside the lock so concurrent artists do not
+        # serialize on it. setdefault lets the first writer win; in the rare
+        # case of two artist names normalizing to one cache key, the second
+        # caller makes a harmless duplicate call and adopts the stored value.
         try:
-            provider_tracks = self.provider.get_top_tracks(artist_name)
+            result: list[ProviderTrack] | Exception = self.provider.get_top_tracks(artist_name)
         except Exception as exc:
-            self._provider_track_cache[cache_key] = exc
-            raise
+            result = exc
 
-        self._provider_track_cache[cache_key] = provider_tracks
-        return provider_tracks
+        with self._cache_lock:
+            stored = self._provider_track_cache.setdefault(cache_key, result)
+        if isinstance(stored, Exception):
+            raise stored
+        return stored
 
     @staticmethod
     def _provider_cache_key(artist_name: str) -> str:
@@ -543,6 +680,8 @@ class Planner:
             playlist_id,
             len(planned_tracks),
         )
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
         for track in planned_tracks:
             safe_jellyfin_title = sanitize_untrusted_text(track.jellyfin_title)
             safe_provider_title = sanitize_untrusted_text(track.provider_title)
@@ -551,6 +690,8 @@ class Planner:
             if safe_provider_title != safe_jellyfin_title:
                 description += f" <- {safe_provider_title}"
             description += f" [{track.match_type}]"
+            if track.play_count:
+                description += f" plays={track.play_count}"
             if safe_album:
                 description += f" ({safe_album})"
-            logger.info(description)
+            logger.debug(description)

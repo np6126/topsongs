@@ -36,6 +36,8 @@ class JellyfinTrack(BaseModel):
     index_number: int | None = None
     parent_index_number: int | None = None
     provider_ids: dict[str, str] = Field(default_factory=dict)
+    play_count: int = 0
+    is_favorite: bool = False
 
 
 class JellyfinPlaylist(BaseModel):
@@ -58,6 +60,8 @@ class TrackMatch(BaseModel):
     jellyfin_title: str
     match_type: Literal["exact", "normalized", "unmatched_local"]
     album: str | None = None
+    play_count: int = 0
+    is_favorite: bool = False
 
 
 class PlannedPlaylistTrack(BaseModel):
@@ -67,6 +71,7 @@ class PlannedPlaylistTrack(BaseModel):
     jellyfin_item_id: str
     match_type: Literal["exact", "normalized", "unmatched_local"]
     album: str | None = None
+    play_count: int = 0
 
 
 class PlaylistPlan(BaseModel):
@@ -87,7 +92,12 @@ class ArtistPlan(BaseModel):
     provider: str
     provider_tracks: list[ProviderTrack] = Field(default_factory=list)
     matched_tracks: list[TrackMatch] = Field(default_factory=list)
+    # Local tracks with no provider match whose normalized title is *not*
+    # already present in the playlist: genuine gaps in Last.fm's top tracks.
     unmatched_local_tracks: list[str] = Field(default_factory=list)
+    # Local tracks dropped from the appended block because another copy of the
+    # same song (by normalized title) is already in the playlist.
+    duplicate_local_tracks: list[str] = Field(default_factory=list)
     playlist_plan: PlaylistPlan | None = None
     notes: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -173,12 +183,25 @@ class RunReport(BaseModel):
 
     @property
     def unmatched_local_track_count(self) -> int:
+        """Distinct local tracks that are a genuine gap in the provider's top tracks."""
         return len(
             {
                 (artist.artist, track_title)
                 for user in self.users
                 for artist in user.artists
                 for track_title in artist.unmatched_local_tracks
+            }
+        )
+
+    @property
+    def duplicate_local_track_count(self) -> int:
+        """Distinct local tracks dropped as duplicates of an already-included song."""
+        return len(
+            {
+                (artist.artist, track_title)
+                for user in self.users
+                for artist in user.artists
+                for track_title in artist.duplicate_local_tracks
             }
         )
 

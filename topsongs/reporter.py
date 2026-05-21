@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timezone
+from operator import attrgetter
 from pathlib import Path
 
 from .models import ArtistPlan, RunReport
@@ -30,42 +32,38 @@ class Reporter:
                 f"failed_user_count={report.failed_user_count}",
                 f"failed_artist_count={report.failed_artist_count}",
                 f"unmatched_local_track_count={report.unmatched_local_track_count}",
+                f"duplicate_local_track_count={report.duplicate_local_track_count}",
             ]
         )
-        unmatched_lines = self._format_unmatched_tracks(report)
-        if unmatched_lines:
-            text += "\n" + "\n".join(unmatched_lines)
+        for label, titles in (
+            ("unmatched_local", attrgetter("unmatched_local_tracks")),
+            ("duplicate_local", attrgetter("duplicate_local_tracks")),
+        ):
+            block = self._format_track_block(report, label, titles)
+            if block:
+                text += "\n" + "\n".join(block)
         last_run_path.write_text(text + "\n", encoding="utf-8")
         return last_run_path
 
     @staticmethod
-    def _format_unmatched_tracks(report: RunReport) -> list[str]:
-        lines: list[str] = []
-        local_lines: list[str] = []
-        seen_local_tracks: set[tuple[str, str]] = set()
+    def _format_track_block(
+        report: RunReport,
+        label: str,
+        titles: Callable[[ArtistPlan], list[str]],
+    ) -> list[str]:
+        """Render one ``<label>_tracks:`` section, deduplicated per (artist, title)."""
+        detail_lines: list[str] = []
+        seen: set[tuple[str, str]] = set()
 
         for user in report.users:
             for artist in user.artists:
-                for track_title in artist.unmatched_local_tracks:
-                    local_key = (artist.artist, track_title)
-                    if local_key in seen_local_tracks:
+                for track_title in titles(artist):
+                    key = (artist.artist, track_title)
+                    if key in seen:
                         continue
-                    seen_local_tracks.add(local_key)
-                    local_lines.append(
-                        Reporter._format_local_track_detail(
-                            artist=artist,
-                            track_title=track_title,
-                        )
-                    )
+                    seen.add(key)
+                    detail_lines.append(f"- {label}: {artist.artist} - {track_title}")
 
-        if local_lines:
-            lines.append("unmatched_local_tracks:")
-            lines.extend(local_lines)
-        return lines
-
-    @staticmethod
-    def _format_local_track_detail(
-        artist: ArtistPlan,
-        track_title: str,
-    ) -> str:
-        return f"- unmatched_local: {artist.artist} - {track_title}"
+        if not detail_lines:
+            return []
+        return [f"{label}_tracks:", *detail_lines]

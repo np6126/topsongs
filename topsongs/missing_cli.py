@@ -120,21 +120,30 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(settings.log_level)
     console = Console()
 
-    jellyfin = JellyfinClient(
+    with JellyfinClient(
         base_url=settings.jellyfin_url,
         api_key=settings.jellyfin_api_key,
         timeout_seconds=settings.request_timeout_seconds,
         max_retries=settings.request_max_retries,
         retry_backoff_seconds=settings.retry_backoff_seconds,
-    )
-    provider = LastFmProvider(
-        api_key=settings.lastfm_api_key,
-        timeout_seconds=settings.request_timeout_seconds,
-        max_retries=settings.request_max_retries,
-        retry_backoff_seconds=settings.retry_backoff_seconds,
-        min_request_interval=_REQUEST_INTERVAL_SECONDS,
-    )
+    ) as jellyfin:
+        with LastFmProvider(
+            api_key=settings.lastfm_api_key,
+            timeout_seconds=settings.request_timeout_seconds,
+            max_retries=settings.request_max_retries,
+            retry_backoff_seconds=settings.retry_backoff_seconds,
+            min_request_interval=_REQUEST_INTERVAL_SECONDS,
+        ) as provider:
+            return _scan(args, settings, console, jellyfin, provider)
 
+
+def _scan(
+    args: argparse.Namespace,
+    settings: Settings,
+    console: Console,
+    jellyfin: JellyfinClient,
+    provider: LastFmProvider,
+) -> int:
     try:
         users = jellyfin.get_users()
     except Exception as exc:  # noqa: BLE001 - surface a clean message, not a traceback

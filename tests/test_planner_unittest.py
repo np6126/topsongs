@@ -1,3 +1,4 @@
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +25,9 @@ class SettingsStub:
     min_track_duration_seconds = 60
     playlist_name_prefix = "Top Songs - "
     append_unmatched_songs = True
+    personalization_weight = 0.0
     dry_run = False
+    run_concurrency = 1
 
 
 class LibraryPathFilterTests(unittest.TestCase):
@@ -72,6 +75,7 @@ class LibraryPathFilterTests(unittest.TestCase):
                             "provider_title": "Army of the Night",
                             "match_type": "exact",
                             "album": "Blessed & Possessed",
+                            "play_count": 0,
                         },
                     )(),
                     type(
@@ -83,21 +87,23 @@ class LibraryPathFilterTests(unittest.TestCase):
                             "provider_title": "We Drink Your Blood - Remastered 2018",
                             "match_type": "normalized",
                             "album": "Preachers of the Night",
+                            "play_count": 7,
                         },
                     )(),
                 ],
             )
 
-        messages = [call.args[0] for call in logger.info.call_args_list]
+        info_messages = [call.args[0] for call in logger.info.call_args_list]
+        track_messages = [call.args[0] for call in logger.debug.call_args_list]
         self.assertIn(
             "event=playlist_applied user=%s playlist=%s action=%s playlist_id=%s track_count=%s",
-            messages[0],
+            info_messages[0],
         )
-        self.assertIn("  1. Army of the Night [exact] (Blessed & Possessed)", messages[1])
+        self.assertIn("  1. Army of the Night [exact] (Blessed & Possessed)", track_messages[0])
         self.assertIn(
             "  2. We Drink Your Blood <- We Drink Your Blood - Remastered 2018 "
-            "[normalized] (Preachers of the Night)",
-            messages[2],
+            "[normalized] plays=7 (Preachers of the Night)",
+            track_messages[1],
         )
 
     def test_provider_tracks_are_cached_per_run(self) -> None:
@@ -550,6 +556,323 @@ class LibraryPathFilterTests(unittest.TestCase):
 
         self.assertEqual(jellyfin.deleted, [])
         self.assertEqual(user_plan.orphan_deleted_count, 0)
+
+    def test_unmatched_block_collapses_duplicate_songs(self) -> None:
+        """Option 1: each song appears once in the appended block."""
+
+        class JellyfinStub:
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id="1", name="Wishmaster", path="/music/1.flac"),
+                    # Exact-name copy of a matched song (different album).
+                    JellyfinTrack(id="2", name="Wishmaster", path="/music/2.flac"),
+                    JellyfinTrack(id="3", name="Amaranth", path="/music/3.flac"),
+                    # Alt-version copies of an unmatched song.
+                    JellyfinTrack(id="4", name="Amaranth (Orchestral Version)",
+                                  path="/music/4.flac"),
+                    JellyfinTrack(id="5", name="Amaranth (Acoustic)",
+                                  path="/music/5.flac"),
+                ] + [
+                    JellyfinTrack(id=str(i), name=f"song{i}", path=f"/music/{i}.flac")
+                    for i in range(6, 13)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="Wishmaster", rank=1)]
+        planner = Planner(SettingsStub(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Nightwish")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        item_ids = artist_plan.playlist_plan.planned_item_ids
+        # Each unique song appears once: id 2 (dup of matched Wishmaster) and
+        # ids 4/5 (alt-version dups of appended Amaranth) are dropped.
+        self.assertEqual(len(item_ids), len(set(item_ids)))
+        self.assertNotIn("2", item_ids)
+        self.assertNotIn("4", item_ids)
+        self.assertNotIn("5", item_ids)
+        self.assertEqual(item_ids[0], "1")
+        self.assertIn("3", item_ids)
+
+    def test_duplicate_and_genuine_gap_tracks_are_classified(self) -> None:
+        """Option 3: report splits duplicates from genuine gaps."""
+
+        class JellyfinStub:
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id="1", name="Wishmaster", path="/music/1.flac"),
+                    JellyfinTrack(id="2", name="Wishmaster (Live)", path="/music/2.flac"),
+                    JellyfinTrack(id="3", name="Amaranth", path="/music/3.flac"),
+                    JellyfinTrack(id="4", name="Amaranth (Demo)", path="/music/4.flac"),
+                ] + [
+                    JellyfinTrack(id=str(i), name=f"deepcut{i}", path=f"/music/{i}.flac")
+                    for i in range(5, 13)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="Wishmaster", rank=1)]
+        planner = Planner(SettingsStub(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Nightwish")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        # Live copy of matched Wishmaster + demo copy of appended Amaranth.
+        self.assertEqual(
+            sorted(artist_plan.duplicate_local_tracks),
+            ["Amaranth (Demo)", "Wishmaster (Live)"],
+        )
+        # Genuine gaps: the unique-named tracks Last.fm did not rank.
+        self.assertEqual(
+            set(artist_plan.unmatched_local_tracks),
+            {"Amaranth", *[f"deepcut{i}" for i in range(5, 13)]},
+        )
+
+    def test_dedup_keeps_most_played_copy_with_personalization(self) -> None:
+        """Option 1: with personalization the kept copy is the most-played one."""
+
+        class PersonalizedSettings(SettingsStub):
+            personalization_weight = 0.6
+
+        class JellyfinStub:
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id="low", name="Nemo", path="/music/low.flac",
+                                  play_count=2),
+                    JellyfinTrack(id="high", name="Nemo", path="/music/high.flac",
+                                  play_count=99),
+                ] + [
+                    JellyfinTrack(id=str(i), name=f"song{i}", path=f"/music/{i}.flac")
+                    for i in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        planner = Planner(PersonalizedSettings(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Nightwish")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        item_ids = artist_plan.playlist_plan.planned_item_ids
+        self.assertIn("high", item_ids)
+        self.assertNotIn("low", item_ids)
+        self.assertEqual(artist_plan.duplicate_local_tracks, ["Nemo"])
+
+    def test_personalization_reorders_playlist_by_user_play_count(self) -> None:
+        """A heavily played track is promoted above its Last.fm rank."""
+
+        class PersonalizedSettings(SettingsStub):
+            personalization_weight = 0.6
+
+        class JellyfinStub:
+            def get_artists(self, user_id):
+                return [JellyfinArtist(id="a1", name="Powerwolf")]
+
+            def get_playlists_for_user(self, user_id):
+                return []
+
+            def get_tracks_for_artist(self, user_id, artist):
+                # song11 is the Last.fm bottom track but the only one the user plays.
+                return [
+                    JellyfinTrack(
+                        id=str(index),
+                        name=f"song{index}",
+                        path=f"/music/song{index}.flac",
+                        play_count=100 if index == 11 else 0,
+                    )
+                    for index in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "playlist-new"
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [
+            ProviderTrack(title=f"song{index}", rank=index) for index in range(1, 12)
+        ]
+        planner = Planner(PersonalizedSettings(), jellyfin=JellyfinStub(), provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Powerwolf")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        self.assertEqual(artist_plan.matched_tracks[0].jellyfin_item_id, "11")
+        self.assertEqual(artist_plan.playlist_plan.planned_item_ids[0], "11")
+
+
+class ConcurrencyPlannerTests(unittest.TestCase):
+    """Stage 2: concurrent per-artist planning must match the sequential run."""
+
+    @staticmethod
+    def _run(run_concurrency: int, artist_names: list[str], failing=()) -> object:
+        settings_cls = type(
+            "ConcSettings", (SettingsStub,), {"run_concurrency": run_concurrency}
+        )
+
+        class JellyfinStub:
+            def get_artists(self, user_id):
+                return [
+                    JellyfinArtist(id=f"a{index}", name=name)
+                    for index, name in enumerate(artist_names)
+                ]
+
+            def get_playlists_for_user(self, user_id):
+                return []
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(
+                        id=f"{artist.id}-{i}",
+                        name=f"song{i}",
+                        path=f"/music/{artist.id}/{i}.flac",
+                    )
+                    for i in range(1, 13)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return f"created-{playlist_name}"
+
+            def delete_playlist(self, playlist_id):
+                pass
+
+        class ProviderStub:
+            name = "lastfm"
+
+            def get_top_tracks(self, artist_name):
+                if artist_name in failing:
+                    raise RuntimeError(f"provider down for {artist_name}")
+                return [ProviderTrack(title="song1", rank=1)]
+
+        planner = Planner(settings_cls(), jellyfin=JellyfinStub(), provider=ProviderStub())
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        return planner._plan_for_user(user)
+
+    @staticmethod
+    def _plan_key(user_plan) -> tuple:
+        return (
+            [plan.artist for plan in user_plan.artists],
+            user_plan.eligible_artist_count,
+            user_plan.planned_playlist_count,
+            user_plan.failed_artist_count,
+            user_plan.orphan_deleted_count,
+        )
+
+    def test_concurrency_does_not_change_the_result(self) -> None:
+        artist_names = [f"Artist{i:02d}" for i in range(12)]
+        baseline = None
+        # A single concurrent pass proves little; repeat to shake out races.
+        for _ in range(20):
+            sequential = self._plan_key(self._run(1, artist_names))
+            concurrent = self._plan_key(self._run(4, artist_names))
+            self.assertEqual(sequential, concurrent)
+            if baseline is None:
+                baseline = sequential
+            self.assertEqual(concurrent, baseline)
+
+    def test_partial_failure_isolates_and_preserves_artist_order(self) -> None:
+        artist_names = [f"Artist{i:02d}" for i in range(8)]
+
+        user_plan = self._run(4, artist_names, failing={"Artist03"})
+
+        self.assertEqual([plan.artist for plan in user_plan.artists], artist_names)
+        self.assertEqual(user_plan.failed_artist_count, 1)
+        self.assertEqual(user_plan.planned_playlist_count, 7)
+        failed = next(plan for plan in user_plan.artists if plan.artist == "Artist03")
+        self.assertIsNotNone(failed.error)
+
+    def test_concurrent_cache_misses_share_result_without_lock_held_during_io(self) -> None:
+        barrier = threading.Barrier(2, timeout=5)
+
+        class BarrierProvider:
+            name = "lastfm"
+
+            def __init__(self) -> None:
+                self.call_count = 0
+                self._lock = threading.Lock()
+
+            def get_top_tracks(self, artist_name):
+                with self._lock:
+                    self.call_count += 1
+                # If _cache_lock were held across the network call, the second
+                # thread could not reach here and the barrier would time out.
+                barrier.wait()
+                return [ProviderTrack(title="song1", rank=1)]
+
+        provider = BarrierProvider()
+        planner = Planner(SettingsStub(), jellyfin=None, provider=provider)
+        results: dict[int, object] = {}
+        errors: dict[int, BaseException] = {}
+
+        def worker(index: int) -> None:
+            try:
+                results[index] = planner._get_provider_tracks("Powerwolf")
+            except BaseException as exc:  # noqa: BLE001 - surfaced via the errors dict
+                errors[index] = exc
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+
+        self.assertEqual(errors, {})
+        self.assertEqual(provider.call_count, 2)
+        # setdefault: the first writer wins and both callers adopt that value.
+        self.assertIs(results[0], results[1])
+
+    def test_collision_loser_existing_playlist_is_protected_from_orphan_deletion(self) -> None:
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_artists(self, user_id):
+                return [
+                    JellyfinArtist(id="a1", name="A/B"),
+                    JellyfinArtist(id="a2", name="A_B"),
+                ]
+
+            def get_playlists_for_user(self, user_id):
+                return [JellyfinPlaylist(id="p1", name="Top Songs - A_B")]
+
+            def get_tracks_for_artist(self, user_id, artist):
+                # Below the eligibility threshold: the collision winner plans
+                # no playlist, so only protected_names can save the existing one.
+                return [
+                    JellyfinTrack(id=f"{artist.id}-{i}", name=f"s{i}", path=f"/music/{i}.flac")
+                    for i in range(5)
+                ]
+
+            def delete_playlist(self, playlist_id):
+                self.deleted.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        jellyfin = JellyfinStub()
+        planner = Planner(SettingsStub(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.planned_playlist_count, 0)
+        self.assertEqual(user_plan.orphan_deleted_count, 0)
+        self.assertEqual(jellyfin.deleted, [])
+        loser = next(plan for plan in user_plan.artists if plan.artist == "A_B")
+        self.assertTrue(any("collision" in note for note in loser.notes))
 
 
 if __name__ == "__main__":

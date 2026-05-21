@@ -81,22 +81,26 @@ def main() -> int:
     report = RunReport.empty(provider="unknown")
     try:
         with acquire_run_lock(settings.state_dir):
-            jellyfin = JellyfinClient(
+            # Nested with-blocks (not the comma form): if the LastFmProvider
+            # constructor raised, a comma-form `with` would leak the already
+            # constructed JellyfinClient — nesting closes it on the way out.
+            with JellyfinClient(
                 base_url=settings.jellyfin_url,
                 api_key=settings.jellyfin_api_key,
                 timeout_seconds=settings.request_timeout_seconds,
                 max_retries=settings.request_max_retries,
                 retry_backoff_seconds=settings.retry_backoff_seconds,
-            )
-            provider = LastFmProvider(
-                api_key=settings.lastfm_api_key,
-                timeout_seconds=settings.request_timeout_seconds,
-                max_retries=settings.request_max_retries,
-                retry_backoff_seconds=settings.retry_backoff_seconds,
-                max_tracks=settings.max_provider_tracks,
-            )
-            planner = Planner(settings=settings, jellyfin=jellyfin, provider=provider)
-            report = planner.run()
+            ) as jellyfin:
+                with LastFmProvider(
+                    api_key=settings.lastfm_api_key,
+                    timeout_seconds=settings.request_timeout_seconds,
+                    max_retries=settings.request_max_retries,
+                    retry_backoff_seconds=settings.retry_backoff_seconds,
+                    max_tracks=settings.max_provider_tracks,
+                    min_request_interval=settings.min_request_interval,
+                ) as provider:
+                    planner = Planner(settings=settings, jellyfin=jellyfin, provider=provider)
+                    report = planner.run()
     except RunAlreadyActiveError as exc:
         logger.warning("event=skip reason=run_lock error=%s", exc)
         return 0

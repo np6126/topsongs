@@ -20,6 +20,16 @@ class _SettingsBase:
     artist_denylist: list[str] = []
 
 
+class _ClientCM:
+    """Context-manager protocol so stubs work with missing_cli's `with` blocks."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
 def test_select_user_by_name() -> None:
     users = [_user("Alice"), _user("Bob")]
     assert missing_cli._select_user(users, _SettingsBase(), "bob").name == "Bob"
@@ -69,7 +79,7 @@ def _wire(monkeypatch, tmp_path, jellyfin_cls, provider_cls) -> None:
 
 
 def test_main_single_artist_happy_path(monkeypatch, tmp_path, capsys) -> None:
-    class JellyfinStub:
+    class JellyfinStub(_ClientCM):
         def __init__(self, **kwargs) -> None:
             pass
 
@@ -82,7 +92,7 @@ def test_main_single_artist_happy_path(monkeypatch, tmp_path, capsys) -> None:
         def get_tracks_for_artist(self, user_id, artist):
             return [JellyfinTrack(id="t1", name="Battery")]
 
-    class ProviderStub:
+    class ProviderStub(_ClientCM):
         def __init__(self, **kwargs) -> None:
             pass
 
@@ -105,7 +115,7 @@ def test_main_single_artist_happy_path(monkeypatch, tmp_path, capsys) -> None:
 
 
 def test_main_artist_not_in_library_returns_nonzero(monkeypatch, tmp_path) -> None:
-    class JellyfinStub:
+    class JellyfinStub(_ClientCM):
         def __init__(self, **kwargs) -> None:
             pass
 
@@ -118,7 +128,7 @@ def test_main_artist_not_in_library_returns_nonzero(monkeypatch, tmp_path) -> No
         def get_tracks_for_artist(self, user_id, artist):
             return []
 
-    class ProviderStub:
+    class ProviderStub(_ClientCM):
         def __init__(self, **kwargs) -> None:
             pass
 
@@ -133,7 +143,7 @@ def test_main_artist_not_in_library_returns_nonzero(monkeypatch, tmp_path) -> No
 def test_main_reports_provider_error_per_artist(monkeypatch, tmp_path, capsys) -> None:
     from topsongs.providers.lastfm import LastFmError
 
-    class JellyfinStub:
+    class JellyfinStub(_ClientCM):
         def __init__(self, **kwargs) -> None:
             pass
 
@@ -146,7 +156,7 @@ def test_main_reports_provider_error_per_artist(monkeypatch, tmp_path, capsys) -
         def get_tracks_for_artist(self, user_id, artist):
             return []
 
-    class ProviderStub:
+    class ProviderStub(_ClientCM):
         def __init__(self, **kwargs) -> None:
             pass
 

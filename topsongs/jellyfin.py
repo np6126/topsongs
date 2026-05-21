@@ -31,6 +31,12 @@ class JellyfinClient:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
+        # One pooled client per run: httpx.Client is thread-safe and reuses
+        # keep-alive connections across requests instead of dialing each time.
+        self._client = httpx.Client(
+            timeout=self.timeout_seconds,
+            headers=self.default_headers,
+        )
 
     @property
     def default_headers(self) -> dict[str, str]:
@@ -38,6 +44,16 @@ class JellyfinClient:
             "X-Emby-Token": self.api_key,
             "Accept": "application/json",
         }
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "JellyfinClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.close()
+        return False
 
     def get_users(self) -> list[JellyfinUser]:
         payload = self._get("/Users", params={})
@@ -71,7 +87,10 @@ class JellyfinClient:
             "IncludeItemTypes": "Audio",
             "ArtistIds": artist.id,
             "SortBy": "Album,SortName",
-            "Fields": "Path,ProviderIds,Album,Artists,RunTimeTicks,ParentIndexNumber,IndexNumber",
+            "Fields": (
+                "Path,ProviderIds,Album,Artists,RunTimeTicks,"
+                "ParentIndexNumber,IndexNumber,UserData"
+            ),
         }
         items = self._get_all_items(f"/Users/{user_id}/Items", params=params)
         return [
@@ -154,14 +173,15 @@ class JellyfinClient:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                with httpx.Client(
-                    timeout=self.timeout_seconds,
-                    headers=self.default_headers,
-                ) as client:
-                    response = client.request(method, url, params=params)
-                    response.raise_for_status()
-                    return response
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+                response = self._client.request(method, url, params=params)
+                response.raise_for_status()
+                return response
+            except (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+                httpx.HTTPStatusError,
+            ) as exc:
                 last_error = exc
                 should_retry = attempt < self.max_retries and _is_retryable_http_error(exc)
                 logger.warning(
@@ -198,6 +218,7 @@ class JellyfinClient:
 
     @staticmethod
     def _track_from_item(item: dict) -> JellyfinTrack:
+        user_data = item.get("UserData") or {}
         return JellyfinTrack(
             id=item["Id"],
             name=item.get("Name", ""),
@@ -208,11 +229,17 @@ class JellyfinClient:
             index_number=item.get("IndexNumber"),
             parent_index_number=item.get("ParentIndexNumber"),
             provider_ids=item.get("ProviderIds") or {},
+            play_count=int(user_data.get("PlayCount") or 0),
+            is_favorite=bool(user_data.get("IsFavorite", False)),
         )
 
 
 def _is_retryable_http_error(exc: Exception) -> bool:
-    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+    if isinstance(
+        exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+    ):
+        # RemoteProtocolError surfaces when a pooled keep-alive connection was
+        # closed server-side while idle; the retry dials a fresh connection.
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code >= 500

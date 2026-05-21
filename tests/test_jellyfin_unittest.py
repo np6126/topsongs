@@ -1,6 +1,8 @@
 import unittest
 
-from topsongs.jellyfin import JellyfinClient
+import httpx
+
+from topsongs.jellyfin import JellyfinClient, _is_retryable_http_error
 
 
 class JellyfinClientTests(unittest.TestCase):
@@ -90,6 +92,28 @@ class JellyfinClientTests(unittest.TestCase):
         self.assertIn("RunTimeTicks", calls[0][1]["Fields"])
         self.assertEqual(tracks[0].runtime_ticks, 59 * 10_000_000)
 
+    def test_get_tracks_for_artist_parses_user_play_data(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        calls = []
+        client._get = lambda path, params: calls.append((path, params)) or {  # type: ignore[method-assign]
+            "Items": [
+                {
+                    "Id": "t1",
+                    "Name": "Resist and Bite",
+                    "UserData": {"PlayCount": 12, "IsFavorite": True},
+                },
+                {"Id": "t2", "Name": "Coleus Sanctus"},
+            ]
+        }
+
+        tracks = client.get_tracks_for_artist("user-1", type("Artist", (), {"id": "a1"})())
+
+        self.assertIn("UserData", calls[0][1]["Fields"])
+        self.assertEqual(tracks[0].play_count, 12)
+        self.assertTrue(tracks[0].is_favorite)
+        self.assertEqual(tracks[1].play_count, 0)
+        self.assertFalse(tracks[1].is_favorite)
+
     def test_delete_playlist_uses_item_endpoint(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
         calls = []
@@ -98,6 +122,22 @@ class JellyfinClientTests(unittest.TestCase):
         client.delete_playlist("playlist-123")
 
         self.assertEqual(calls, ["/Items/playlist-123"])
+
+    def test_close_closes_pooled_client(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+
+        client.close()
+
+        self.assertTrue(client._client.is_closed)
+
+    def test_context_manager_closes_pooled_client(self) -> None:
+        with JellyfinClient(base_url="http://jellyfin:8096", api_key="token") as client:
+            self.assertFalse(client._client.is_closed)
+
+        self.assertTrue(client._client.is_closed)
+
+    def test_remote_protocol_error_is_retryable(self) -> None:
+        self.assertTrue(_is_retryable_http_error(httpx.RemoteProtocolError("peer closed")))
 
 
 if __name__ == "__main__":

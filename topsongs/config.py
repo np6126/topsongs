@@ -28,7 +28,10 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=20.0, alias="REQUEST_TIMEOUT_SECONDS")
     request_max_retries: int = Field(default=2, alias="REQUEST_MAX_RETRIES")
     retry_backoff_seconds: float = Field(default=1.0, alias="RETRY_BACKOFF_SECONDS")
+    run_concurrency: int = Field(default=1, alias="RUN_CONCURRENCY")
+    min_request_interval: float = Field(default=0.0, alias="MIN_REQUEST_INTERVAL")
     max_provider_tracks: int = Field(default=200, alias="MAX_PROVIDER_TRACKS")
+    personalization_weight: float = Field(default=0.6, alias="PERSONALIZATION_WEIGHT")
     playlist_name_prefix: str = Field(default="Top Songs - ", alias="PLAYLIST_NAME_PREFIX")
     append_unmatched_songs: bool = Field(default=True, alias="APPEND_UNMATCHED_SONGS")
     dry_run: bool = Field(default=False, alias="DRY_RUN")
@@ -61,3 +64,21 @@ class Settings(BaseSettings):
     @classmethod
     def strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @field_validator("personalization_weight")
+    @classmethod
+    def clamp_personalization_weight(cls, value: float) -> float:
+        return min(1.0, max(0.0, value))
+
+    @field_validator("run_concurrency")
+    @classmethod
+    def clamp_run_concurrency(cls, value: int) -> int:
+        # Lower bound 1: ThreadPoolExecutor(max_workers=0) raises, and 1 keeps
+        # the sequential default. Upper bound 16: a typo must not flood the
+        # homeserver with worker threads.
+        return min(16, max(1, value))
+
+    @field_validator("min_request_interval")
+    @classmethod
+    def clamp_min_request_interval(cls, value: float) -> float:
+        return max(0.0, value)
