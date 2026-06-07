@@ -548,9 +548,20 @@ class Planner:
         else:
             created_playlist_id = self.jellyfin.create_playlist(user.id, playlist_name, item_ids)
             if self.settings.playlist_tag_managed:
-                self.jellyfin.add_managed_tag(
-                    user.id, created_playlist_id, self.settings.playlist_managed_tag
-                )
+                try:
+                    self.jellyfin.add_managed_tag(
+                        user.id, created_playlist_id, self.settings.playlist_managed_tag
+                    )
+                except Exception:
+                    # In tag mode the tag is the only thing that makes a playlist
+                    # discoverable: an untagged playlist is invisible to every
+                    # future run, which can neither replace nor orphan-delete it.
+                    # Roll the just-created playlist back so a tag failure cannot
+                    # leak a permanent untagged duplicate, then fail this artist.
+                    self._rollback_untagged_playlist(
+                        user, playlist_name, created_playlist_id
+                    )
+                    raise
             if existing_playlist is not None:
                 try:
                     self.jellyfin.delete_playlist(existing_playlist.id)
@@ -594,6 +605,32 @@ class Planner:
             planned_tracks,
         )
         return playlist_plan
+
+    def _rollback_untagged_playlist(
+        self,
+        user: JellyfinUser,
+        playlist_name: str,
+        created_playlist_id: str,
+    ) -> None:
+        try:
+            self.jellyfin.delete_playlist(created_playlist_id)
+            logger.warning(
+                "event=playlist_tag_rolled_back user=%s playlist=%s playlist_id=%s",
+                sanitize_untrusted_text(user.name),
+                sanitize_untrusted_text(playlist_name),
+                created_playlist_id,
+            )
+        except Exception as cleanup_exc:
+            # The original tagging error is re-raised by the caller; surface the
+            # leaked untagged playlist here so it can be cleaned up by hand.
+            logger.exception(
+                "event=playlist_tag_rollback_failed user=%s playlist=%s "
+                "playlist_id=%s error=%s",
+                sanitize_untrusted_text(user.name),
+                sanitize_untrusted_text(playlist_name),
+                created_playlist_id,
+                cleanup_exc,
+            )
 
     def _delete_orphan_playlists(
         self,

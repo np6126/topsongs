@@ -337,4 +337,4 @@ Sensitive or private data may appear in:
 
 ## License
 
-`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.2.0.
+`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.2.1.

@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-07
+
+### Fixed
+- Tag-managed mode no longer leaks duplicate playlists. The create→tag→delete
+  sequence was not atomic: if tagging a freshly created playlist failed, the
+  playlist was left untagged and thus invisible to every later run — never
+  replaced and never orphan-deleted — so a stale copy accumulated next to each
+  regenerated playlist. A failed tag now rolls back the just-created playlist,
+  leaving any existing tagged playlist untouched.
+
 ## [0.2.0] - 2026-06-07
 
 ### Added

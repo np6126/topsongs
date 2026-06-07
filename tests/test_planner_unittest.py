@@ -346,6 +346,50 @@ class LibraryPathFilterTests(unittest.TestCase):
         self.assertEqual(playlist_plan.action, "replaced")
         self.assertEqual(playlist_plan.playlist_name, "Powerwolf")
 
+    def test_tag_mode_rolls_back_created_playlist_when_tagging_fails(self) -> None:
+        """Tag mode: a failed tag deletes the just-created playlist so no untagged
+        orphan leaks, and the artist is reported as failed."""
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_artists(self, user_id):
+                return [JellyfinArtist(id="a1", name="Powerwolf")]
+
+            def get_playlists_for_user(self, user_id):
+                return []
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id=str(i), name=f"song{i}", path=f"/music/{i}.flac")
+                    for i in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "new-id"
+
+            def add_managed_tag(self, user_id, playlist_id, tag):
+                raise RuntimeError("tag write failed")
+
+            def delete_playlist(self, playlist_id):
+                self.deleted.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        jellyfin = JellyfinStub()
+        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        # The untagged playlist is rolled back, not left behind as an orphan.
+        self.assertEqual(jellyfin.deleted, ["new-id"])
+        self.assertEqual(user_plan.failed_artist_count, 1)
+        self.assertEqual(user_plan.planned_playlist_count, 0)
+        self.assertEqual(user_plan.artists[0].error, "tag write failed")
+
     def test_existing_playlist_is_deleted_when_artist_is_no_longer_eligible(self) -> None:
         class JellyfinStub:
             def __init__(self) -> None:
