@@ -1,4 +1,12 @@
 #!/bin/sh
+# container-entrypoint.sh — PID 1 for the topsongs Docker image.
+#
+# Writes a cron job that runs `run-topsongs` on CRON_SCHEDULE (default 03:00),
+# exporting the topsongs settings env (derived from the Settings model) into the
+# cron environment. Optionally runs one refresh immediately when
+# RUN_ON_STARTUP=true, then starts cron as a background daemon and execs the web
+# UI (topsongs-web) as PID 1. Wired as the image ENTRYPOINT; not meant to be run
+# by hand.
 set -eu
 
 CRON_FILE=/etc/cron.d/topsongs
@@ -34,5 +42,10 @@ if [ "${RUN_ON_STARTUP:-false}" = "true" ]; then
   run-topsongs
 fi
 
-echo "Starting cron with schedule: ${CRON_SCHEDULE:-0 3 * * *}"
-exec cron -f
+# Run cron as a background daemon and the web UI as PID 1 in the foreground, so
+# the nightly job keeps firing while topsongs-web serves the dashboard. If
+# uvicorn dies the container exits and Compose restarts it.
+echo "Starting cron daemon (schedule: ${CRON_SCHEDULE:-0 3 * * *})"
+cron
+echo "Starting web UI on :${TOPSONGS_WEB_PORT:-8080}"
+exec topsongs-web

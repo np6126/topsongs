@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# topsongs-missing wrapper — list an artist's songs missing from Jellyfin.
+#
+# Runs the in-container `topsongs-missing` CLI: compares local tracks against the
+# Last.fm discography and prints the gap. Run from this deploy dir (next to
+# docker-compose.yml).
+#
+# Usage:
+#   ./topsongs-missing "Metallica"
+#   ./topsongs-missing --user Alice --all-types
 set -euo pipefail
 
 RUNTIME_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

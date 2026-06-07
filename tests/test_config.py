@@ -43,6 +43,48 @@ def test_playlist_name_prefix_can_be_configured(monkeypatch) -> None:
     assert settings.playlist_name_prefix == "Best Of - "
 
 
+def test_playlist_tag_managed_defaults_to_false(monkeypatch) -> None:
+    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
+    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
+
+    settings = Settings()
+
+    assert settings.playlist_tag_managed is False
+
+
+def test_playlist_tag_managed_can_be_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
+    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
+    monkeypatch.setenv("PLAYLIST_TAG_MANAGED", "true")
+
+    settings = Settings()
+
+    assert settings.playlist_tag_managed is True
+
+
+def test_playlist_managed_tag_defaults_to_topsongs(monkeypatch) -> None:
+    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
+    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
+
+    settings = Settings()
+
+    assert settings.playlist_managed_tag == "topsongs"
+
+
+def test_playlist_managed_tag_can_be_configured(monkeypatch) -> None:
+    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
+    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
+    monkeypatch.setenv("PLAYLIST_MANAGED_TAG", "managed-by-topsongs")
+
+    settings = Settings()
+
+    assert settings.playlist_managed_tag == "managed-by-topsongs"
+
+
 def test_append_unmatched_songs_defaults_to_true(monkeypatch) -> None:
     monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
     monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")

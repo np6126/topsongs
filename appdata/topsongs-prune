@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# topsongs-prune wrapper — keep a named allowlist of playlists, delete the rest.
+#
+# Runs the in-container `topsongs-prune` CLI against the live Jellyfin. Deletes
+# every playlist (across ALL users) whose name is not in --keep, optionally
+# renaming the kept ones with --rename-prefix. Run from the deploy dir (next to
+# docker-compose.yml). Interactive: prompts for confirmation unless --yes.
+#
+# Usage:
+#   ./topsongs-prune --keep Alice --keep Bob --dry-run
+#   ./topsongs-prune --keep Alice,Bob --rename-prefix _ --yes
+set -euo pipefail
+
+RUNTIME_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+cd "$RUNTIME_DIR"
+exec docker compose exec app topsongs-prune "$@"

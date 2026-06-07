@@ -22,6 +22,7 @@ A Jellyfin music library knows your artists but has no "best of this artist" pla
 - **Personalized per user.** Each Jellyfin user gets their own playlists, reordered by their own play counts and favorites — not one shared ranking.
 - **Conservative matching.** Track titles are matched exactly first, then by a normalized form (lowercased, accent-folded, remaster/live/feat. tags stripped). It is deliberately not fuzzy, so it does not invent matches — and it is not a recommendation engine.
 - **Container-first, self-hostable.** Ships as a Docker image with a Compose example and a nightly cron. It is also a plain Python CLI for development and one-off runs.
+- **Web dashboard.** An optional built-in UI drives every action — trigger a run with a live log stream, browse the live playlists, run the missing-songs report, and preview/execute purge and prune — alongside the nightly cron in the same container.
 
 ---
 
@@ -54,6 +55,37 @@ docker compose logs -f app
 
 > [!TIP]
 > Want to see what a run would do before it touches Jellyfin? Set `DRY_RUN=true` in `.env` and run `./run-topsongs` — every planned action is logged and nothing is written.
+
+## Web dashboard
+
+<div align="center">
+<img src="docs/screenshot-dashboard.png" alt="topsongs dashboard: last run, counts, next schedule and mode at a glance" width="49%">
+&nbsp;
+<img src="docs/screenshot-missing.png" alt="missing-songs report with per-album coverage bars" width="49%">
+<br>
+<sub><em>The dashboard (left) and the missing-songs report (right).</em></sub>
+</div>
+
+The container also serves a web dashboard on port `8080` (the `appdata/docker-compose.yml` example publishes it). Open `http://<host>:8080` and you get every topsongs action in one place:
+
+- **Dashboard** — the last run's status and counts, the next scheduled run, the run-lock state, and Jellyfin reachability at a glance.
+- **Run** — trigger a playlist refresh (with an optional dry run) and watch the logs stream live; it is the same job cron runs nightly, and the run lock still prevents overlap.
+- **Playlists** — the managed playlists currently in Jellyfin, grouped per user (works in both prefix and tag mode).
+- **Missing** — the [missing-songs gap report](#finding-missing-songs) rendered with per-album coverage bars.
+- **Purge** and **Prune** — preview exactly what would be deleted, then execute behind a confirmation.
+- **Config** — the effective settings of the running container (secrets are redacted).
+
+It runs as a small FastAPI app started by the `topsongs-web` console script, in the same container as cron. The dashboard is unauthenticated by default, which is fine behind a reverse proxy or on a trusted network; set `TOPSONGS_WEB_TOKEN` to require that token (sent as a bearer token) on every API call. `TOPSONGS_WEB_HOST` and `TOPSONGS_WEB_PORT` change the bind address and port.
+
+> [!WARNING]
+> The dashboard can delete playlists (purge/prune) and trigger runs. Do not expose port `8080` to an untrusted network without setting `TOPSONGS_WEB_TOKEN` or putting an authenticating proxy in front of it.
+
+For local development, install the web extra and launch it directly:
+
+```bash
+pip install -e '.[web]'
+topsongs-web   # serves on 0.0.0.0:8080
+```
 
 ## Personalized ranking
 
@@ -128,7 +160,9 @@ Characters invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in t
 | `MIN_REQUEST_INTERVAL` | no | `0` | Minimum seconds between Last.fm requests, enforced across all threads. `0` disables throttling; raise it if Last.fm returns HTTP 429 under concurrency. |
 | `MAX_PROVIDER_TRACKS` | no | `200` | Maximum Last.fm top tracks to fetch and consider per artist. |
 | `PERSONALIZATION_WEIGHT` | no | `0.6` | How much each user's own Jellyfin listening reorders a playlist, from `0.0` (pure Last.fm order) to `1.0` (purely personal). Clamped to `0.0`–`1.0`. See [Personalized ranking](#personalized-ranking). |
-| `PLAYLIST_NAME_PREFIX` | no | `Top Songs - ` | Prefix used for managed playlist names such as `Top Songs - Powerwolf`. Only playlists with this prefix are considered managed and eligible for cleanup. |
+| `PLAYLIST_NAME_PREFIX` | no | `Top Songs - ` | Prefix used for managed playlist names such as `Top Songs - Powerwolf`. Only playlists with this prefix are considered managed and eligible for cleanup. Ignored when `PLAYLIST_TAG_MANAGED` is on. |
+| `PLAYLIST_TAG_MANAGED` | no | `false` | When `true`, managed playlists are identified by a Jellyfin tag instead of the name prefix, so names can be bare (`Powerwolf` instead of `Top Songs - Powerwolf`). See [Tag-managed playlists](#tag-managed-playlists). |
+| `PLAYLIST_MANAGED_TAG` | no | `topsongs` | The Jellyfin tag applied to, and used to recognize, managed playlists when `PLAYLIST_TAG_MANAGED` is on. |
 | `APPEND_UNMATCHED_SONGS` | no | `true` | Whether local tracks missing from the provider top list are appended to the end of generated playlists, one entry per song. Set to `false` to keep playlists limited to provider matches. |
 | `DRY_RUN` | no | `false` | Set to `true` to simulate a run without creating or deleting any playlists. All planned actions are logged but no changes are written to Jellyfin. |
 | `ARTIST_ALLOWLIST` | no | empty | Comma-separated artist names to include. Empty means all artists. |
@@ -140,8 +174,25 @@ Characters invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in t
 | `PROJECT_ROOT` | no | `..` | Docker build context used by `appdata/docker-compose.yml`. |
 | `CRON_SCHEDULE` | no | `0 3 * * *` | Cron expression for scheduled container runs. The default runs daily at 03:00 in the container's local timezone. |
 | `RUN_ON_STARTUP` | no | `false` | Set to `true` to run once when the container starts. |
+| `TOPSONGS_WEB_HOST` | no | `0.0.0.0` | Bind address for the [web dashboard](#web-dashboard). |
+| `TOPSONGS_WEB_PORT` | no | `8080` | Port for the web dashboard. |
+| `TOPSONGS_WEB_TOKEN` | no | empty | When set, every dashboard API call must send this value as a bearer token. Empty leaves the dashboard open. |
 
 </details>
+
+### Tag-managed playlists
+
+By default `topsongs` recognizes the playlists it manages by their name prefix (`Top Songs - `), which means every managed playlist carries that prefix in its name. If you would rather the playlists be named bare — just the artist, like `Powerwolf` — set `PLAYLIST_TAG_MANAGED=true`.
+
+In tag mode, `topsongs` drops the prefix from new playlist names and instead applies a Jellyfin tag (`PLAYLIST_MANAGED_TAG`, default `topsongs`) to every playlist it creates. That tag, not the name, is what marks a playlist as managed: only tagged playlists are refreshed and eligible for cleanup, so a hand-made playlist that happens to share an artist name is left untouched.
+
+```env
+PLAYLIST_TAG_MANAGED=true
+PLAYLIST_MANAGED_TAG=topsongs
+```
+
+> [!NOTE]
+> The two modes track playlists differently, so switching `PLAYLIST_TAG_MANAGED` on an existing deployment orphans the playlists created under the old mode — they keep the old naming and are no longer recognized as managed. Clean them up first with [`topsongs-purge`](#bulk-playlist-cleanup) (prefix mode) before the switch.
 
 ### Allow and deny filters
 
@@ -205,6 +256,26 @@ cd appdata
 - Last.fm's crowd-sourced data sometimes contains misspelled duplicates, so a track that differs from one you own by a single-character typo is still counted as owned. This typo tolerance applies only to the gap report, not to playlist generation.
 - Fetched discographies are cached on disk under `STATE_DIR/discography_cache/` with a 30-day TTL, to keep repeated runs fast and easy on the Last.fm API.
 
+## Bulk playlist cleanup
+
+A normal run already deletes the managed playlists that no longer apply. Two companion commands handle the larger, manual cleanups — both act across **all** Jellyfin users, both print a plan first, and both ask for confirmation unless `--yes` is given (or preview only with `--dry-run`). The same actions are available in the [web dashboard](#web-dashboard).
+
+**`topsongs-purge`** deletes every playlist whose name starts with a prefix — by default the configured `PLAYLIST_NAME_PREFIX`, or a different one via `--prefix`. It refuses an empty prefix, which would match every playlist. Use it to remove all `topsongs`-created playlists at once, for example before [switching to tag-managed mode](#tag-managed-playlists).
+
+```bash
+topsongs-purge --dry-run
+topsongs-purge --prefix "Top Songs - " --yes
+```
+
+**`topsongs-prune`** is the inverse: it keeps a named allowlist and deletes everything else. `--keep` is required (an empty allowlist would wipe every playlist) and takes repeated or comma-separated names. Kept playlists can optionally be renamed with `--rename-prefix`; matching ignores that prefix, so re-runs are idempotent.
+
+```bash
+topsongs-prune --keep Alice --keep Bob --dry-run
+topsongs-prune --keep Alice,Bob --rename-prefix _ --yes
+```
+
+In a Docker Compose deployment, run them inside the container with the `appdata/topsongs-purge` and `appdata/topsongs-prune` wrappers, which forward all arguments.
+
 ## Local development
 
 `topsongs` is container-first, but it is also a plain Python CLI. Local runs need Python 3.11 or newer.
@@ -234,7 +305,7 @@ Build the Docker image from the repository root:
 docker build -t topsongs:dev .
 ```
 
-The two entry points are `topsongs` (also `run-topsongs`) for a playlist run, and `topsongs-missing` for the gap report.
+The console entry points are `topsongs` (also `run-topsongs`) for a playlist run, `topsongs-missing` for the [gap report](#finding-missing-songs), `topsongs-purge` and `topsongs-prune` for [bulk cleanup](#bulk-playlist-cleanup), and `topsongs-web` for the [web dashboard](#web-dashboard).
 
 ## Runtime files and logs
 
@@ -266,4 +337,4 @@ Sensitive or private data may appear in:
 
 ## License
 
-`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.1.0.
+`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.2.0.

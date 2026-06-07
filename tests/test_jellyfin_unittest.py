@@ -123,6 +123,84 @@ class JellyfinClientTests(unittest.TestCase):
 
         self.assertEqual(calls, ["/Items/playlist-123"])
 
+    def test_rename_playlist_reads_dto_and_posts_name_only(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        gets = []
+        posts = []
+        client._get = lambda path, params: gets.append((path, params)) or {  # type: ignore[method-assign]
+            "Id": "p1",
+            "Name": "Favorites",
+            "Overview": "keep me",
+        }
+        client._post_json = lambda path, body: posts.append((path, body))  # type: ignore[method-assign]
+
+        client.rename_playlist("user-1", "p1", "_Favorites")
+
+        self.assertEqual(gets[0][0], "/Users/user-1/Items/p1")
+        self.assertEqual(posts[0][0], "/Items/p1")
+        self.assertEqual(posts[0][1]["Name"], "_Favorites")
+        # Other DTO fields are posted back unchanged.
+        self.assertEqual(posts[0][1]["Overview"], "keep me")
+
+    def test_get_playlists_for_user_omits_media_types_when_none(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        calls = []
+        client._get = lambda path, params: calls.append((path, params)) or {  # type: ignore[method-assign]
+            "Items": [{"Id": "p1", "Name": "Favorites"}]
+        }
+
+        client.get_playlists_for_user("user-1", media_types=None)
+
+        self.assertNotIn("MediaTypes", calls[0][1])
+
+    def test_add_managed_tag_reads_dto_appends_tag_and_posts(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        gets = []
+        posts = []
+        client._get = lambda path, params: gets.append((path, params)) or {  # type: ignore[method-assign]
+            "Id": "p1",
+            "Name": "AC_DC",
+            "Tags": ["existing"],
+        }
+        client._post_json = lambda path, body: posts.append((path, body))  # type: ignore[method-assign]
+
+        client.add_managed_tag("user-1", "p1", "topsongs")
+
+        self.assertEqual(gets[0][0], "/Users/user-1/Items/p1")
+        self.assertEqual(posts[0][0], "/Items/p1")
+        # The existing tag is preserved; the managed tag is appended.
+        self.assertEqual(posts[0][1]["Tags"], ["existing", "topsongs"])
+
+    def test_add_managed_tag_is_noop_when_tag_already_present(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        posts = []
+        client._get = lambda path, params: {  # type: ignore[method-assign]
+            "Id": "p1",
+            "Name": "AC_DC",
+            "Tags": ["topsongs"],
+        }
+        client._post_json = lambda path, body: posts.append((path, body))  # type: ignore[method-assign]
+
+        client.add_managed_tag("user-1", "p1", "topsongs")
+
+        self.assertEqual(posts, [])
+
+    def test_get_playlists_for_user_requests_tags_and_maps_them(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        calls = []
+        client._get = lambda path, params: calls.append((path, params)) or {  # type: ignore[method-assign]
+            "Items": [
+                {"Id": "p1", "Name": "AC_DC", "Tags": ["topsongs"]},
+                {"Id": "p2", "Name": "Favorites"},
+            ]
+        }
+
+        playlists = client.get_playlists_for_user("user-1")
+
+        self.assertEqual(calls[0][1]["Fields"], "Tags")
+        self.assertEqual(playlists[0].tags, ["topsongs"])
+        self.assertEqual(playlists[1].tags, [])
+
     def test_close_closes_pooled_client(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
 

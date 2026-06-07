@@ -7,10 +7,13 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      # Web dashboard. Drop or firewall this if you do not want it exposed.
+      - "8080:8080"
     volumes:
       - ./state:/app/state
     healthcheck:
-      test: ["CMD", "python", "-c", "import topsongs.cli"]
+      test: ["CMD", "python", "-c", "import topsongs.web.app"]
       interval: 30s
       timeout: 10s
       retries: 3

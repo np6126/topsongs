@@ -1,3 +1,12 @@
+"""topsongs-missing — show which of an artist's songs are missing from Jellyfin.
+
+Compares each artist's local Jellyfin tracks against their Last.fm discography
+and prints the gap. With no artist argument it checks every artist in the
+library; results use a 30-day discography cache in the state dir.
+
+    topsongs-missing "Metallica"
+    topsongs-missing --user Alice --all-types --no-cache
+"""
 from __future__ import annotations
 
 import argparse

@@ -24,10 +24,17 @@ class SettingsStub:
     min_tracks_per_artist = 10
     min_track_duration_seconds = 60
     playlist_name_prefix = "Top Songs - "
+    playlist_tag_managed = False
+    playlist_managed_tag = "topsongs"
     append_unmatched_songs = True
     personalization_weight = 0.0
     dry_run = False
     run_concurrency = 1
+
+
+class TagManagedSettings(SettingsStub):
+    # Identify managed playlists by tag, not name prefix, so names are bare.
+    playlist_tag_managed = True
 
 
 class LibraryPathFilterTests(unittest.TestCase):
@@ -227,6 +234,117 @@ class LibraryPathFilterTests(unittest.TestCase):
 
         self.assertEqual(user_plan.orphan_deleted_count, 1)
         self.assertEqual(jellyfin.deleted_ids, ["p1"])
+
+    def test_tag_mode_uses_bare_name_and_tags_created_playlist(self) -> None:
+        """Tag mode: the playlist name has no prefix and the create is tagged."""
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.tagged: list[tuple[str, str, str]] = []
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id=str(i), name=f"song{i}", path=f"/music/{i}.flac")
+                    for i in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "new-id"
+
+            def add_managed_tag(self, user_id, playlist_id, tag):
+                self.tagged.append((user_id, playlist_id, tag))
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        jellyfin = JellyfinStub()
+        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+        artist = JellyfinArtist(id="a1", name="Powerwolf")
+
+        artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
+
+        self.assertEqual(artist_plan.playlist_plan.playlist_name, "Powerwolf")
+        self.assertEqual(jellyfin.tagged, [("u1", "new-id", "topsongs")])
+
+    def test_tag_mode_orphan_deletes_tagged_but_leaves_untagged_same_name(self) -> None:
+        """Tag mode: a tagged orphan is deleted; an untagged same-name user playlist is not."""
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_artists(self, user_id):
+                return []
+
+            def get_playlists_for_user(self, user_id):
+                return [
+                    JellyfinPlaylist(id="p1", name="Nightwish", tags=["topsongs"]),
+                    JellyfinPlaylist(id="p2", name="Nightwish", tags=[]),
+                ]
+
+            def delete_playlist(self, playlist_id):
+                self.deleted.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        jellyfin = JellyfinStub()
+        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.orphan_deleted_count, 1)
+        self.assertEqual(jellyfin.deleted, ["p1"])
+
+    def test_tag_mode_replace_matches_only_tagged_playlist(self) -> None:
+        """Tag mode: a re-run replaces the tagged playlist and leaves the untagged twin."""
+
+        class JellyfinStub:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+                self.tagged: list[tuple[str, str, str]] = []
+
+            def get_artists(self, user_id):
+                return [JellyfinArtist(id="a1", name="Powerwolf")]
+
+            def get_playlists_for_user(self, user_id):
+                return [
+                    JellyfinPlaylist(id="pu", name="Powerwolf", tags=[]),
+                    JellyfinPlaylist(id="pt", name="Powerwolf", tags=["topsongs"]),
+                ]
+
+            def get_tracks_for_artist(self, user_id, artist):
+                return [
+                    JellyfinTrack(id=str(i), name=f"song{i}", path=f"/music/{i}.flac")
+                    for i in range(1, 12)
+                ]
+
+            def create_playlist(self, user_id, playlist_name, item_ids):
+                return "new-id"
+
+            def add_managed_tag(self, user_id, playlist_id, tag):
+                self.tagged.append((user_id, playlist_id, tag))
+
+            def delete_playlist(self, playlist_id):
+                self.deleted.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
+        jellyfin = JellyfinStub()
+        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
+
+        user_plan = planner._plan_for_user(user)
+
+        self.assertEqual(user_plan.planned_playlist_count, 1)
+        # Only the tagged twin is replaced (deleted); the untagged user playlist survives.
+        self.assertEqual(jellyfin.deleted, ["pt"])
+        self.assertEqual(jellyfin.tagged, [("u1", "new-id", "topsongs")])
+        playlist_plan = user_plan.artists[0].playlist_plan
+        self.assertEqual(playlist_plan.action, "replaced")
+        self.assertEqual(playlist_plan.playlist_name, "Powerwolf")
 
     def test_existing_playlist_is_deleted_when_artist_is_no_longer_eligible(self) -> None:
         class JellyfinStub:

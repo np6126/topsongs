@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# run-topsongs wrapper — trigger a playlist refresh in the running container.
+#
+# Runs the in-container `run-topsongs` CLI (the same job cron runs nightly),
+# rebuilding every user's "Top Songs - <Artist>" playlists. Non-interactive (-T)
+# so it is safe from scripts/cron. Run from this deploy dir (next to
+# docker-compose.yml).
+#
+# Usage: ./run-topsongs
 set -euo pipefail
 
 RUNTIME_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

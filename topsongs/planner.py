@@ -152,6 +152,7 @@ class Planner:
         existing_playlists = {
             playlist.name: playlist
             for playlist in self.jellyfin.get_playlists_for_user(user.id)
+            if self._is_managed(playlist)
         }
         filtered = [artist for artist in artists if self._artist_filter.matches(artist.name)]
         runnable, collision_plans, protected_names = self._resolve_collisions(
@@ -438,10 +439,15 @@ class Planner:
         )
 
     def _playlist_name(self, artist_name: str) -> str:
-        return f"{self.settings.playlist_name_prefix}{sanitize_for_filename(artist_name)}"
+        # Tag mode identifies managed playlists by their tag, so the name needs
+        # no prefix and can be bare.
+        prefix = "" if self.settings.playlist_tag_managed else self.settings.playlist_name_prefix
+        return f"{prefix}{sanitize_for_filename(artist_name)}"
 
-    def _is_managed_playlist_name(self, playlist_name: str) -> bool:
-        return playlist_name.startswith(self.settings.playlist_name_prefix)
+    def _is_managed(self, playlist: JellyfinPlaylist) -> bool:
+        if self.settings.playlist_tag_managed:
+            return self.settings.playlist_managed_tag in playlist.tags
+        return playlist.name.startswith(self.settings.playlist_name_prefix)
 
     @staticmethod
     def _build_planned_tracks(matches: list[TrackMatch]) -> list[PlannedPlaylistTrack]:
@@ -541,6 +547,10 @@ class Planner:
             created_playlist_id = "dry-run"
         else:
             created_playlist_id = self.jellyfin.create_playlist(user.id, playlist_name, item_ids)
+            if self.settings.playlist_tag_managed:
+                self.jellyfin.add_managed_tag(
+                    user.id, created_playlist_id, self.settings.playlist_managed_tag
+                )
             if existing_playlist is not None:
                 try:
                     self.jellyfin.delete_playlist(existing_playlist.id)
@@ -595,7 +605,7 @@ class Planner:
         orphan_deleted_count = 0
 
         for playlist_name, playlist in list(existing_playlists.items()):
-            if not self._is_managed_playlist_name(playlist_name):
+            if not self._is_managed(playlist):
                 continue
             if playlist_name in planned_playlist_names:
                 continue

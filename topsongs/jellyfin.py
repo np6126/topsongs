@@ -99,16 +99,28 @@ class JellyfinClient:
             if item.get("Id") and item.get("Name")
         ]
 
-    def get_playlists_for_user(self, user_id: str) -> list[JellyfinPlaylist]:
+    def get_playlists_for_user(
+        self, user_id: str, media_types: str | None = "Audio"
+    ) -> list[JellyfinPlaylist]:
         params = {
             "Recursive": "true",
             "IncludeItemTypes": "Playlist",
-            "MediaTypes": "Audio",
             "SortBy": "SortName",
+            # Tags identify topsongs-managed playlists in tag mode; the list
+            # endpoint omits them unless explicitly requested.
+            "Fields": "Tags",
         }
+        # media_types=None returns playlists of every media type; the default
+        # keeps the audio-only behaviour the planner relies on.
+        if media_types is not None:
+            params["MediaTypes"] = media_types
         items = self._get_all_items(f"/Users/{user_id}/Items", params=params)
         return [
-            JellyfinPlaylist(id=item["Id"], name=item.get("Name", ""))
+            JellyfinPlaylist(
+                id=item["Id"],
+                name=item.get("Name", ""),
+                tags=item.get("Tags") or [],
+            )
             for item in items
             if item.get("Id") and item.get("Name")
         ]
@@ -128,6 +140,30 @@ class JellyfinClient:
 
     def delete_playlist(self, playlist_id: str) -> None:
         self._delete(f"/Items/{playlist_id}")
+
+    def rename_playlist(self, user_id: str, playlist_id: str, new_name: str) -> None:
+        # Jellyfin (10.11) has no working name-only playlist update: both
+        # POST /Playlists/{id} and GET /Items/{id} return 400. The web client's
+        # path works: read the full item DTO through the user-scoped endpoint,
+        # change only Name, and post it back via UpdateItem (POST /Items/{id},
+        # which returns 204). Track membership and visibility are not DTO fields,
+        # so a name-only round-trip leaves them untouched.
+        dto = self._get(f"/Users/{user_id}/Items/{playlist_id}", params={})
+        dto["Name"] = new_name
+        self._post_json(f"/Items/{playlist_id}", dto)
+
+    def add_managed_tag(self, user_id: str, playlist_id: str, tag: str) -> None:
+        # Same UpdateItem round-trip as rename_playlist: read the full item DTO
+        # through the user-scoped endpoint, append the tag, and post it back via
+        # POST /Items/{id}. Idempotent — a playlist that already carries the tag
+        # needs no write.
+        dto = self._get(f"/Users/{user_id}/Items/{playlist_id}", params={})
+        tags = dto.get("Tags") or []
+        if tag in tags:
+            return
+        tags.append(tag)
+        dto["Tags"] = tags
+        self._post_json(f"/Items/{playlist_id}", dto)
 
     def _get_all_items(self, path: str, params: dict[str, str]) -> list[dict]:
         page_size = 500
@@ -155,6 +191,11 @@ class JellyfinClient:
         logger.debug("POST %s?%s", url, urlencode(params))
         return self._request_json("POST", url, params=params)
 
+    def _post_json(self, path: str, body: dict) -> None:
+        url = f"{self.base_url}{path}"
+        logger.debug("POST %s (json body)", url)
+        self._request("POST", url, params=None, json_body=body)
+
     def _delete(self, path: str) -> None:
         url = f"{self.base_url}{path}"
         logger.debug("DELETE %s", url)
@@ -169,11 +210,17 @@ class JellyfinClient:
     def _request_no_content(self, method: str, url: str) -> None:
         self._request(method, url, params=None)
 
-    def _request(self, method: str, url: str, params: dict[str, str] | None) -> httpx.Response:
+    def _request(
+        self,
+        method: str,
+        url: str,
+        params: dict[str, str] | None,
+        json_body: dict | None = None,
+    ) -> httpx.Response:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                response = self._client.request(method, url, params=params)
+                response = self._client.request(method, url, params=params, json=json_body)
                 response.raise_for_status()
                 return response
             except (

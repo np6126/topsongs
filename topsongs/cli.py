@@ -1,3 +1,15 @@
+"""topsongs / run-topsongs — build the Last.fm-top-tracks playlists in Jellyfin.
+
+The main entry point. For every targeted Jellyfin user it plans and creates one
+"Top Songs - <Artist>" playlist per eligible artist, replacing the previous run's
+playlists and deleting orphaned ones. Everything is configured via environment
+variables / appdata/.env (see topsongs.config.Settings); a run lock prevents
+overlapping runs. Invoke with no arguments:
+
+    topsongs          # or: run-topsongs
+
+Exit code is non-zero if any user or artist failed.
+"""
 from __future__ import annotations
 
 import logging

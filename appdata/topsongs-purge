@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# topsongs-purge wrapper — delete all topsongs-created playlists for every user.
+#
+# Runs the in-container `topsongs-purge` CLI: deletes every playlist whose name
+# starts with PLAYLIST_NAME_PREFIX (or --prefix), across ALL users. Run from this
+# deploy dir (next to docker-compose.yml). Interactive: prompts unless --yes.
+#
+# Usage:
+#   ./topsongs-purge --dry-run
+#   ./topsongs-purge --prefix "Top Songs - " --yes
+set -euo pipefail
+
+RUNTIME_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+cd "$RUNTIME_DIR"
+exec docker compose exec app topsongs-purge "$@"

@@ -43,6 +43,7 @@ class JellyfinTrack(BaseModel):
 class JellyfinPlaylist(BaseModel):
     id: str
     name: str
+    tags: list[str] = Field(default_factory=list)
 
 
 class ProviderTrack(BaseModel):

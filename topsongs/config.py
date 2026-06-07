@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     max_provider_tracks: int = Field(default=200, alias="MAX_PROVIDER_TRACKS")
     personalization_weight: float = Field(default=0.6, alias="PERSONALIZATION_WEIGHT")
     playlist_name_prefix: str = Field(default="Top Songs - ", alias="PLAYLIST_NAME_PREFIX")
+    # Opt-in: identify managed playlists by an in-band Jellyfin tag instead of
+    # the name prefix, which lets playlist names be bare (no prefix). Default
+    # off keeps the prefix path byte-for-byte unchanged.
+    playlist_tag_managed: bool = Field(default=False, alias="PLAYLIST_TAG_MANAGED")
+    playlist_managed_tag: str = Field(default="topsongs", alias="PLAYLIST_MANAGED_TAG")
     append_unmatched_songs: bool = Field(default=True, alias="APPEND_UNMATCHED_SONGS")
     dry_run: bool = Field(default=False, alias="DRY_RUN")
 

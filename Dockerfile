@@ -12,7 +12,10 @@ COPY scripts/container-entrypoint.sh /usr/local/bin/container-entrypoint.sh
 RUN apt-get update \
     && apt-get install -y --no-install-recommends cron \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir . \
+    && pip install --no-cache-dir '.[web]' \
     && chmod +x /usr/local/bin/container-entrypoint.sh
+
+# Web dashboard served by topsongs-web (override the port with TOPSONGS_WEB_PORT).
+EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/container-entrypoint.sh"]
