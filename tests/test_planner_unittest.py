@@ -719,17 +719,18 @@ class LibraryPathFilterTests(unittest.TestCase):
         self.assertEqual(jellyfin.deleted, [])
         self.assertEqual(user_plan.orphan_deleted_count, 0)
 
-    def test_unmatched_block_collapses_duplicate_songs(self) -> None:
-        """Option 1: each song appears once in the appended block."""
+    def test_unmatched_block_dedups_only_identical_titles(self) -> None:
+        """Identical-title copies collapse; distinct editions are kept."""
 
         class JellyfinStub:
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(id="1", name="Wishmaster", path="/music/1.flac"),
-                    # Exact-name copy of a matched song (different album).
+                    # Exact-name copy of a matched song (different album): dropped.
                     JellyfinTrack(id="2", name="Wishmaster", path="/music/2.flac"),
                     JellyfinTrack(id="3", name="Amaranth", path="/music/3.flac"),
-                    # Alt-version copies of an unmatched song.
+                    # Distinct editions of an appended song: kept as their own
+                    # entries so owning them never drops them from the playlist.
                     JellyfinTrack(id="4", name="Amaranth (Orchestral Version)",
                                   path="/music/4.flac"),
                     JellyfinTrack(id="5", name="Amaranth (Acoustic)",
@@ -752,28 +753,32 @@ class LibraryPathFilterTests(unittest.TestCase):
         artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
 
         item_ids = artist_plan.playlist_plan.planned_item_ids
-        # Each unique song appears once: id 2 (dup of matched Wishmaster) and
-        # ids 4/5 (alt-version dups of appended Amaranth) are dropped.
+        # id 2 (identical-title copy of matched Wishmaster) is the only drop;
+        # the distinct Amaranth editions (ids 4/5) are kept.
         self.assertEqual(len(item_ids), len(set(item_ids)))
         self.assertNotIn("2", item_ids)
-        self.assertNotIn("4", item_ids)
-        self.assertNotIn("5", item_ids)
         self.assertEqual(item_ids[0], "1")
         self.assertIn("3", item_ids)
+        self.assertIn("4", item_ids)
+        self.assertIn("5", item_ids)
+        self.assertEqual(artist_plan.duplicate_local_tracks, ["Wishmaster"])
 
-    def test_duplicate_and_genuine_gap_tracks_are_classified(self) -> None:
-        """Option 3: report splits duplicates from genuine gaps."""
+    def test_distinct_editions_kept_only_identical_titles_are_duplicates(self) -> None:
+        """Report: editions become gaps; only identical titles are duplicates."""
 
         class JellyfinStub:
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(id="1", name="Wishmaster", path="/music/1.flac"),
-                    JellyfinTrack(id="2", name="Wishmaster (Live)", path="/music/2.flac"),
-                    JellyfinTrack(id="3", name="Amaranth", path="/music/3.flac"),
-                    JellyfinTrack(id="4", name="Amaranth (Demo)", path="/music/4.flac"),
+                    # Identical-title copy of the matched song: a real duplicate.
+                    JellyfinTrack(id="2", name="Wishmaster", path="/music/2.flac"),
+                    # Distinct editions: kept as their own appended entries.
+                    JellyfinTrack(id="3", name="Wishmaster (Live)", path="/music/3.flac"),
+                    JellyfinTrack(id="4", name="Amaranth", path="/music/4.flac"),
+                    JellyfinTrack(id="5", name="Amaranth (Demo)", path="/music/5.flac"),
                 ] + [
                     JellyfinTrack(id=str(i), name=f"deepcut{i}", path=f"/music/{i}.flac")
-                    for i in range(5, 13)
+                    for i in range(6, 13)
                 ]
 
             def create_playlist(self, user_id, playlist_name, item_ids):
@@ -788,16 +793,18 @@ class LibraryPathFilterTests(unittest.TestCase):
 
         artist_plan = planner._plan_for_artist(user, artist, existing_playlists={})
 
-        # Live copy of matched Wishmaster + demo copy of appended Amaranth.
-        self.assertEqual(
-            sorted(artist_plan.duplicate_local_tracks),
-            ["Amaranth (Demo)", "Wishmaster (Live)"],
-        )
-        # Genuine gaps: the unique-named tracks Last.fm did not rank.
+        # Only the identical-title copy of Wishmaster is a duplicate.
+        self.assertEqual(artist_plan.duplicate_local_tracks, ["Wishmaster"])
+        # Editions and unranked deep cuts are all kept as genuine gaps.
         self.assertEqual(
             set(artist_plan.unmatched_local_tracks),
-            {"Amaranth", *[f"deepcut{i}" for i in range(5, 13)]},
+            {"Wishmaster (Live)", "Amaranth", "Amaranth (Demo)",
+             *[f"deepcut{i}" for i in range(6, 13)]},
         )
+        item_ids = artist_plan.playlist_plan.planned_item_ids
+        self.assertNotIn("2", item_ids)
+        self.assertIn("3", item_ids)
+        self.assertIn("5", item_ids)
 
     def test_dedup_keeps_most_played_copy_with_personalization(self) -> None:
         """Option 1: with personalization the kept copy is the most-played one."""

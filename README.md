@@ -311,7 +311,7 @@ The console entry points are `topsongs` (also `run-topsongs`) for a playlist run
 
 Docker Compose mounts `appdata/state` to `/app/state`. The state directory holds the run summary, the lockfile, and the `topsongs-missing` discography cache.
 
-**Run summary.** Each playlist run writes a compact summary to `STATE_DIR/last_run.txt` with start and finish times, user/artist/playlist/failure counts, and two local-track counts: `unmatched_local_track_count` (tracks the provider's top list does not cover) and `duplicate_local_track_count` (tracks dropped because another edition of the same song is already included).
+**Run summary.** Each playlist run writes a compact summary to `STATE_DIR/last_run.txt` with start and finish times, user/artist/playlist/failure counts, and two local-track counts: `unmatched_local_track_count` (tracks the provider's top list does not cover) and `duplicate_local_track_count` (tracks dropped because an identically-titled copy is already included; distinct editions such as live or remaster versions are kept as their own entries).
 
 **Lockfile.** A lockfile in `STATE_DIR` prevents overlapping runs; a second run exits cleanly. Locks older than two hours are cleared automatically.
 

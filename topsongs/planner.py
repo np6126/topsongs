@@ -471,11 +471,12 @@ class Planner:
     ) -> tuple[list[TrackMatch], list[str]]:
         """Build the appended block of local tracks the provider did not rank.
 
-        Each song appears at most once per playlist: a local track is skipped
-        when its normalized title already appears among the matched tracks or an
-        already-appended track. Returns ``(appended, duplicates)`` — the
-        appended TrackMatches and the titles dropped as a copy of an
-        already-included song.
+        A local track is skipped only when an identically-titled copy is already
+        included (matched or already appended) — a genuine duplicate. Distinct
+        editions of the same song (live/remaster/demo, whose title differs) are
+        kept as their own entries so owning a track never drops it from the
+        playlist. Returns ``(appended, duplicates)`` — the appended TrackMatches
+        and the titles dropped as an identically-titled copy of an included one.
         """
         matched_ids = {match.jellyfin_item_id for match in matches}
         unmatched = [track for track in local_tracks if track.id not in matched_ids]
@@ -489,15 +490,15 @@ class Planner:
                 reverse=True,
             )
 
-        seen = {normalize_name(match.jellyfin_title) for match in matches}
+        seen = {match.jellyfin_title.casefold() for match in matches}
         appended: list[TrackMatch] = []
         duplicates: list[str] = []
         for track in unmatched:
-            normalized = normalize_name(track.name)
-            if normalized in seen:
+            title_key = track.name.casefold()
+            if title_key in seen:
                 duplicates.append(track.name)
                 continue
-            seen.add(normalized)
+            seen.add(title_key)
             appended.append(
                 TrackMatch(
                     provider_title=track.name,

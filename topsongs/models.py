@@ -93,11 +93,12 @@ class ArtistPlan(BaseModel):
     provider: str
     provider_tracks: list[ProviderTrack] = Field(default_factory=list)
     matched_tracks: list[TrackMatch] = Field(default_factory=list)
-    # Local tracks with no provider match whose normalized title is *not*
-    # already present in the playlist: genuine gaps in Last.fm's top tracks.
+    # Local tracks with no provider match whose title is *not* already present
+    # in the playlist: genuine gaps in Last.fm's top tracks, plus distinct
+    # editions (live/remaster/demo) of an included song.
     unmatched_local_tracks: list[str] = Field(default_factory=list)
-    # Local tracks dropped from the appended block because another copy of the
-    # same song (by normalized title) is already in the playlist.
+    # Local tracks dropped from the appended block because an identically-titled
+    # copy is already in the playlist.
     duplicate_local_tracks: list[str] = Field(default_factory=list)
     playlist_plan: PlaylistPlan | None = None
     notes: list[str] = Field(default_factory=list)

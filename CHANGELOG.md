@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-07-07
+
+### Fixed
+- Track matching no longer lets a live/remaster edition steal the studio
+  take's provider rank. When Last.fm's title differed from the library only in
+  casing (e.g. "Kings Of The Carnival Creation" vs "Kings of the Carnival
+  Creation"), the case-sensitive exact match missed and the normalized fallback
+  picked whichever edition Jellyfin happened to return first — often the live
+  one — dropping the studio track entirely. Exact matching is now
+  case-insensitive, and when several local editions collapse to one normalized
+  title the studio take (shortest title) wins the rank.
+
+### Changed
+- The appended block now dedups only by exact title. Distinct editions of an
+  included song (live, remaster, demo, ...) are kept as their own entries
+  instead of being collapsed away, so owning a track never drops it from the
+  playlist. Only a genuinely identical-titled copy is still deduped.
+
 ## [0.2.1] - 2026-06-07
 
 ### Fixed

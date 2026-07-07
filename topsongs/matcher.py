@@ -15,14 +15,26 @@ def match_tracks(
     local_track_list = list(local_tracks)
 
     for track in local_track_list:
-        local_by_exact.setdefault(track.name, track)
-        local_by_normalized.setdefault(normalize_name(track.name), track)
+        # Case-insensitive exact match. Providers and local tags routinely
+        # differ only in title casing ("Kings Of The Carnival Creation" vs
+        # "Kings of the Carnival Creation"); without folding, that miss falls
+        # through to the normalized tier, where a live/remaster sibling can
+        # steal the studio track's rank.
+        local_by_exact.setdefault(track.name.casefold(), track)
+        # Several recordings can collapse to one normalized key (a studio take
+        # plus its live/remaster/demo editions). Keep the one closest to its
+        # base form — the shortest title, i.e. the least alt-version cruft — so
+        # the provider's studio rank resolves to the studio take, not an edition.
+        normalized = normalize_name(track.name)
+        incumbent = local_by_normalized.get(normalized)
+        if incumbent is None or len(track.name) < len(incumbent.name):
+            local_by_normalized[normalized] = track
 
     matches: list[TrackMatch] = []
     used_local_ids: set[str] = set()
 
     for provider_track in provider_tracks:
-        local = local_by_exact.get(provider_track.title)
+        local = local_by_exact.get(provider_track.title.casefold())
         match_type = "exact"
 
         if local is None:
