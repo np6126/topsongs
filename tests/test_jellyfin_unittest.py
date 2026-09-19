@@ -6,6 +6,12 @@ from topsongs.jellyfin import JellyfinClient, _is_retryable_http_error
 
 
 class JellyfinClientTests(unittest.TestCase):
+    def test_default_headers_use_authorization_token(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+
+        self.assertEqual(client.default_headers["Authorization"], 'MediaBrowser Token="token"')
+        self.assertNotIn("X-Emby-Token", client.default_headers)
+
     def test_create_playlist_uses_target_user_and_returns_created_id(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
         calls = []

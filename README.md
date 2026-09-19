@@ -28,7 +28,7 @@ A Jellyfin music library knows your artists but has no "best of this artist" pla
 
 ## Quick start
 
-You need a Jellyfin server with a music library, a Jellyfin API key, and a Last.fm API key. [Creating the API keys](#creating-api-keys) is covered below.
+You need a Jellyfin server (10.9 or newer) with a music library, a Jellyfin API key, and a Last.fm API key. [Creating the API keys](#creating-api-keys) is covered below.
 
 The recommended setup is Docker Compose from the `appdata/` directory:
 
@@ -337,4 +337,4 @@ Sensitive or private data may appear in:
 
 ## License
 
-`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.2.1.
+`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.2.3.

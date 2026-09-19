@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-09-19
+
+### Fixed
+- Jellyfin authentication now sends the API key in the
+  `Authorization: MediaBrowser Token="..."` header instead of the legacy
+  `X-Emby-Token` header, which Jellyfin 12 rejects with 401 — every API call
+  failed against a Jellyfin 12 server. Verified against Jellyfin 10.9, 10.10,
+  10.11, 12.0 and 12.1: the new header authenticates on all of them.
+
+### Documentation
+- Note the minimum supported server version (Jellyfin 10.9). Playlist creation
+  fails on 10.8 and older, which return 415 for `POST /Playlists`.
+
 ## [0.2.2] - 2026-07-07
 
 ### Fixed
@@ -73,6 +86,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Allow/deny filters for artists, users, and library paths; `DRY_RUN` preview
   mode; scoped, prefix-based playlist cleanup.
 
+[0.2.3]: https://github.com/np6126/topsongs/releases/tag/v0.2.3
 [0.2.2]: https://github.com/np6126/topsongs/releases/tag/v0.2.2
 [0.2.1]: https://github.com/np6126/topsongs/releases/tag/v0.2.1
 [0.2.0]: https://github.com/np6126/topsongs/releases/tag/v0.2.0

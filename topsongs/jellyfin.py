@@ -41,7 +41,8 @@ class JellyfinClient:
     @property
     def default_headers(self) -> dict[str, str]:
         return {
-            "X-Emby-Token": self.api_key,
+            # Jellyfin 12 rejects the legacy X-Emby-Token header (401).
+            "Authorization": f'MediaBrowser Token="{self.api_key}"',
             "Accept": "application/json",
         }
 
