@@ -2,6 +2,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from topsongs import cli
 from topsongs.models import ArtistPlan, RunReport, UserPlan
 
@@ -67,7 +69,7 @@ def test_main_passes_max_tracks_only_to_lastfm_provider(monkeypatch, tmp_path) -
     monkeypatch.setattr(cli, "configure_logging", lambda level: None)
     monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
 
-    assert cli.main() == 0
+    assert cli.main([]) == 0
 
     assert "max_tracks" not in jellyfin_kwargs
     assert lastfm_kwargs["max_tracks"] == 75
@@ -176,7 +178,7 @@ def test_main_returns_nonzero_when_artists_failed(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(cli, "configure_logging", lambda level: None)
     monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
 
-    assert cli.main() == 1
+    assert cli.main([]) == 1
 
 
 def test_main_writes_report_and_returns_nonzero_when_planner_raises(monkeypatch, tmp_path) -> None:
@@ -220,7 +222,7 @@ def test_main_writes_report_and_returns_nonzero_when_planner_raises(monkeypatch,
     monkeypatch.setattr(cli, "configure_logging", lambda level: None)
     monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
 
-    result = cli.main()
+    result = cli.main([])
 
     assert result == 1
     assert len(written_reports) == 1
@@ -249,6 +251,78 @@ def test_fresh_lock_is_not_cleared(tmp_path) -> None:
     cli._maybe_clear_stale_lock(lock_path)
 
     assert lock_path.exists()
+
+
+def test_help_exits_without_starting_a_run(monkeypatch, capsys) -> None:
+    """--help used to fall through and replace every playlist — it must only print usage."""
+
+    def _unexpected() -> None:
+        raise AssertionError("Settings must not be built when only --help was asked for")
+
+    monkeypatch.setattr(cli, "Settings", _unexpected)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--help"])
+
+    assert excinfo.value.code == 0
+    assert "--dry-run" in capsys.readouterr().out
+
+
+def test_unknown_argument_exits_without_starting_a_run(monkeypatch) -> None:
+    """An unrecognised flag must abort instead of silently starting a full run."""
+
+    def _unexpected() -> None:
+        raise AssertionError("Settings must not be built for an invalid invocation")
+
+    monkeypatch.setattr(cli, "Settings", _unexpected)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--no-such-flag"])
+
+    assert excinfo.value.code == 2
+
+
+def test_dry_run_flag_reaches_the_planner(monkeypatch, tmp_path) -> None:
+    """--dry-run must override DRY_RUN=false from the configuration."""
+    seen = {}
+
+    class SettingsStub:
+        jellyfin_url = "http://jellyfin:8096"
+        jellyfin_api_key = "jellyfin-key"
+        lastfm_api_key = "lastfm-key"
+        request_timeout_seconds = 20
+        request_max_retries = 2
+        retry_backoff_seconds = 1.0
+        min_request_interval = 0.0
+        max_provider_tracks = 75
+        state_dir = tmp_path
+        log_level = "INFO"
+        dry_run = False
+
+    class PlannerStub:
+        def __init__(self, settings, jellyfin, provider) -> None:
+            seen["dry_run"] = settings.dry_run
+
+        def run(self) -> RunReport:
+            return RunReport.empty(provider="lastfm")
+
+    class ReporterStub:
+        def __init__(self, state_dir: Path) -> None:
+            pass
+
+        def write(self, report: RunReport) -> Path:
+            return tmp_path / "last_run.txt"
+
+    monkeypatch.setattr(cli, "Settings", SettingsStub)
+    monkeypatch.setattr(cli, "JellyfinClient", MagicMock)
+    monkeypatch.setattr(cli, "LastFmProvider", MagicMock)
+    monkeypatch.setattr(cli, "Planner", PlannerStub)
+    monkeypatch.setattr(cli, "Reporter", ReporterStub)
+    monkeypatch.setattr(cli, "configure_logging", lambda level: None)
+    monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
+
+    assert cli.main(["--dry-run"]) == 0
+    assert seen["dry_run"] is True
 
 
 class _NullContext:

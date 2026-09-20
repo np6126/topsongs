@@ -54,7 +54,7 @@ docker compose logs -f app
 ```
 
 > [!TIP]
-> Want to see what a run would do before it touches Jellyfin? Set `DRY_RUN=true` in `.env` and run `./run-topsongs` — every planned action is logged and nothing is written.
+> Want to see what a run would do before it touches Jellyfin? Run `./run-topsongs --dry-run` — every planned action is logged and nothing is written. Set `DRY_RUN=true` in `.env` to make that the default for every run.
 
 ## Web dashboard
 

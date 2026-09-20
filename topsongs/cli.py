@@ -2,16 +2,18 @@
 
 The main entry point. For every targeted Jellyfin user it plans and creates one
 "Top Songs - <Artist>" playlist per eligible artist, replacing the previous run's
-playlists and deleting orphaned ones. Everything is configured via environment
-variables / appdata/.env (see topsongs.config.Settings); a run lock prevents
-overlapping runs. Invoke with no arguments:
+playlists and deleting orphaned ones. Everything else is configured via
+environment variables / appdata/.env (see topsongs.config.Settings); a run lock
+prevents overlapping runs.
 
-    topsongs          # or: run-topsongs
+    topsongs              # or: run-topsongs
+    topsongs --dry-run    # plan and log only, change nothing
 
 Exit code is non-zero if any user or artist failed.
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -83,8 +85,32 @@ def acquire_run_lock(state_dir: Path):
                 pass
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="topsongs",
+        description=(
+            "Baut für jeden Jellyfin-Benutzer je Artist eine Playlist aus den "
+            "Last.fm-Top-Tracks und ersetzt dabei die Playlists des Vorlaufs. "
+            "Konfiguriert wird über Umgebungsvariablen bzw. appdata/.env."
+        ),
+        epilog="Identisch aufrufbar als run-topsongs.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Lauf nur planen und protokollieren, ohne Playlists in Jellyfin zu "
+            "ändern. Überschreibt DRY_RUN aus der Konfiguration."
+        ),
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
     settings = Settings()
+    if args.dry_run:
+        settings.dry_run = True
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(settings.log_level)
     logger.info("event=start state_dir=%s dry_run=%s", settings.state_dir, settings.dry_run)
