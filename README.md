@@ -147,9 +147,7 @@ RUN_ON_STARTUP=false
 
 Characters invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in the artist part of a playlist name, so `AC/DC` becomes `Top Songs - AC_DC`.
 
-<details>
-<summary><strong>Full configuration reference</strong></summary>
-<br>
+### Full configuration reference
 
 | Variable | Required | Default | Purpose |
 | --- | :---: | --- | --- |
@@ -185,8 +183,6 @@ Characters invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in t
 | `TOPSONGS_WEB_HOST` | no | `0.0.0.0` | Bind address for the [web dashboard](#web-dashboard). |
 | `TOPSONGS_WEB_PORT` | no | `8080` | Port for the web dashboard. |
 | `TOPSONGS_WEB_TOKEN` | no | empty | When set, every dashboard API call must send this value as a bearer token. Empty leaves the dashboard open. |
-
-</details>
 
 ### Tag-managed playlists
 
