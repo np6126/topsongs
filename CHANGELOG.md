@@ -85,6 +85,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Tag-managed playlist mode**: set `PLAYLIST_TAG_MANAGED=true` to identify
   managed playlists by a Jellyfin tag (`PLAYLIST_MANAGED_TAG`, default
   `topsongs`) instead of the name prefix, allowing bare playlist names.
+- Playlists personalized per user: each user's Jellyfin play counts and
+  favorites reorder their playlists, weighted by `PERSONALIZATION_WEIGHT`.
+- `topsongs-missing` gap report: which tracks of an artist are absent from the
+  library, grouped by album.
+- `DRY_RUN` preview mode.
+- Configurable playlist name prefix (`PLAYLIST_NAME_PREFIX`) with scoped,
+  prefix-based cleanup of orphaned playlists.
 - `appdata/restart.py` helper to pull, rebuild, and restart a Compose
   deployment in one step.
 - Dashboard screenshots in the README.
@@ -97,14 +104,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - Initial release: per-artist "Top Songs" playlists built from Last.fm top
-  tracks, matched against a Jellyfin music library and personalized per user by
-  play counts and favorites.
-- `topsongs-missing` gap report: which tracks of an artist are absent from the
-  library, grouped by album.
+  tracks and matched against a Jellyfin music library, one set per Jellyfin
+  user.
 - Container-first deployment with a Docker Compose example and a nightly cron;
   also runnable as a plain Python CLI.
-- Allow/deny filters for artists, users, and library paths; `DRY_RUN` preview
-  mode; scoped, prefix-based playlist cleanup.
+- Allow/deny filters for artists, users, and library paths.
 
 [0.2.5]: https://github.com/np6126/topsongs/releases/tag/v0.2.5
 [0.2.4]: https://github.com/np6126/topsongs/releases/tag/v0.2.4
