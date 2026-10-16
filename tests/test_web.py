@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from topsongs.config import Settings
 from topsongs.models import JellyfinPlaylist, JellyfinUser, JellyfinUserPolicy
 from topsongs.web import app as webapp
 from topsongs.web import services
@@ -184,3 +185,15 @@ def test_purge_empty_prefix_refused(monkeypatch):
         assert "leer" in str(exc)
     else:
         raise AssertionError("empty prefix must raise ConfigError")
+
+
+def test_config_view_shows_unset_optional_value_as_dash(monkeypatch) -> None:
+    settings = Settings(
+        JELLYFIN_URL="http://jellyfin:8096", JELLYFIN_API_KEY="k", LASTFM_API_KEY="l"
+    )
+    monkeypatch.setattr(services, "get_settings", lambda: settings)
+    monkeypatch.setattr(settings, "recency_bonus", None)
+
+    fields = {field["key"]: field["value"] for field in services.config_view()["fields"]}
+
+    assert fields["RECENCY_BONUS"] == "—"

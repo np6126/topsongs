@@ -277,6 +277,7 @@ class JellyfinClient:
             index_number=item.get("IndexNumber"),
             parent_index_number=item.get("ParentIndexNumber"),
             provider_ids=item.get("ProviderIds") or {},
+            year=item.get("ProductionYear"),
             play_count=int(user_data.get("PlayCount") or 0),
             is_favorite=bool(user_data.get("IsFavorite", False)),
         )

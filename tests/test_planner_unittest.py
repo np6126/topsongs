@@ -28,6 +28,7 @@ class SettingsStub:
     playlist_managed_tag = "topsongs"
     append_unmatched_songs = True
     personalization_weight = 0.0
+    recency_bonus = None
     dry_run = False
     run_concurrency = 1
 

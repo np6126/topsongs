@@ -150,6 +150,35 @@ def test_personalization_weight_is_clamped_to_unit_range(monkeypatch) -> None:
     assert Settings().personalization_weight == 0.0
 
 
+def test_recency_bonus_is_none_when_unset_or_empty(monkeypatch) -> None:
+    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
+    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
+    monkeypatch.delenv("RECENCY_BONUS", raising=False)
+    assert Settings().recency_bonus is None
+
+    monkeypatch.setenv("RECENCY_BONUS", "")
+    assert Settings().recency_bonus is None
+
+    monkeypatch.setenv("RECENCY_BONUS", "0")
+    assert Settings().recency_bonus == 0.0
+
+
+def test_recency_bonus_is_clamped_to_unit_range(monkeypatch) -> None:
+    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
+    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
+
+    monkeypatch.setenv("RECENCY_BONUS", "0.15")
+    assert Settings().recency_bonus == 0.15
+
+    monkeypatch.setenv("RECENCY_BONUS", "5")
+    assert Settings().recency_bonus == 1.0
+
+    monkeypatch.setenv("RECENCY_BONUS", "-2")
+    assert Settings().recency_bonus == 0.0
+
+
 def test_min_track_duration_seconds_defaults_to_60(monkeypatch) -> None:
     monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
     monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")

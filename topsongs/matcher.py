@@ -52,6 +52,7 @@ def match_tracks(
                 jellyfin_title=local.name,
                 match_type=match_type,
                 album=local.album,
+                year=local.year,
                 play_count=local.play_count,
                 is_favorite=local.is_favorite,
             )

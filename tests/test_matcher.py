@@ -8,7 +8,7 @@ def test_match_exact_and_normalized() -> None:
         ProviderTrack(title="We Drink Your Blood - Remastered 2018", rank=2),
     ]
     local_tracks = [
-        JellyfinTrack(id="1", name="Army of the Night", album="Blessed & Possessed"),
+        JellyfinTrack(id="1", name="Army of the Night", album="Blessed & Possessed", year=2015),
         JellyfinTrack(id="2", name="We Drink Your Blood", album="Preachers of the Night"),
     ]
 
@@ -17,6 +17,7 @@ def test_match_exact_and_normalized() -> None:
     assert len(matches) == 2
     assert not unmatched_local
     assert matches[0].match_type == "exact"
+    assert matches[0].year == 2015
     assert matches[1].match_type == "normalized"
 
 

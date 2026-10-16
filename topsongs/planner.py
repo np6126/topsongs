@@ -376,7 +376,11 @@ class Planner:
         plan.provider_tracks = provider_tracks
 
         matches, _ = match_tracks(provider_tracks, local_tracks)
-        matches = rerank_matches(matches, self.settings.personalization_weight)
+        matches = rerank_matches(
+            matches,
+            self.settings.personalization_weight,
+            recency_bonus=self.settings.recency_bonus or 0.0,
+        )
         plan.matched_tracks = matches
 
         appended, duplicate_titles = self._build_unmatched_local_matches(
@@ -506,6 +510,7 @@ class Planner:
                     jellyfin_title=track.name,
                     match_type="unmatched_local",
                     album=track.album,
+                    year=track.year,
                     play_count=track.play_count,
                     is_favorite=track.is_favorite,
                 )

@@ -36,6 +36,7 @@ class JellyfinTrack(BaseModel):
     index_number: int | None = None
     parent_index_number: int | None = None
     provider_ids: dict[str, str] = Field(default_factory=dict)
+    year: int | None = None
     play_count: int = 0
     is_favorite: bool = False
 
@@ -61,6 +62,7 @@ class TrackMatch(BaseModel):
     jellyfin_title: str
     match_type: Literal["exact", "normalized", "unmatched_local"]
     album: str | None = None
+    year: int | None = None
     play_count: int = 0
     is_favorite: bool = False
 

@@ -106,6 +106,7 @@ class JellyfinClientTests(unittest.TestCase):
                 {
                     "Id": "t1",
                     "Name": "Resist and Bite",
+                    "ProductionYear": 2014,
                     "UserData": {"PlayCount": 12, "IsFavorite": True},
                 },
                 {"Id": "t2", "Name": "Coleus Sanctus"},
@@ -117,8 +118,10 @@ class JellyfinClientTests(unittest.TestCase):
         self.assertIn("UserData", calls[0][1]["Fields"])
         self.assertEqual(tracks[0].play_count, 12)
         self.assertTrue(tracks[0].is_favorite)
+        self.assertEqual(tracks[0].year, 2014)
         self.assertEqual(tracks[1].play_count, 0)
         self.assertFalse(tracks[1].is_favorite)
+        self.assertIsNone(tracks[1].year)
 
     def test_delete_playlist_uses_item_endpoint(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")

@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     min_request_interval: float = Field(default=0.0, alias="MIN_REQUEST_INTERVAL")
     max_provider_tracks: int = Field(default=200, alias="MAX_PROVIDER_TRACKS")
     personalization_weight: float = Field(default=0.6, alias="PERSONALIZATION_WEIGHT")
+    # Unset (or empty, via env_ignore_empty) means no bonus.
+    recency_bonus: float | None = Field(default=None, alias="RECENCY_BONUS")
     playlist_name_prefix: str = Field(default="Top Songs - ", alias="PLAYLIST_NAME_PREFIX")
     # Opt-in: identify managed playlists by an in-band Jellyfin tag instead of
     # the name prefix, which lets playlist names be bare (no prefix). Default
@@ -76,9 +78,11 @@ class Settings(BaseSettings):
     def strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
 
-    @field_validator("personalization_weight")
+    @field_validator("personalization_weight", "recency_bonus")
     @classmethod
-    def clamp_personalization_weight(cls, value: float) -> float:
+    def clamp_to_unit_range(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
         return min(1.0, max(0.0, value))
 
     @field_validator("run_concurrency")

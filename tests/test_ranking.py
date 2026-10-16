@@ -1,8 +1,15 @@
+import pytest
+
 from topsongs.models import TrackMatch
 from topsongs.ranking import rerank_matches
 
 
-def _match(item_id: str, play_count: int = 0, is_favorite: bool = False) -> TrackMatch:
+def _match(
+    item_id: str,
+    play_count: int = 0,
+    is_favorite: bool = False,
+    year: int | None = None,
+) -> TrackMatch:
     return TrackMatch(
         provider_title=item_id,
         jellyfin_item_id=item_id,
@@ -10,6 +17,7 @@ def _match(item_id: str, play_count: int = 0, is_favorite: bool = False) -> Trac
         match_type="exact",
         play_count=play_count,
         is_favorite=is_favorite,
+        year=year,
     )
 
 
@@ -83,3 +91,33 @@ def test_modest_plays_do_not_overturn_a_top_hit() -> None:
     ]
 
     assert _ids(rerank_matches(matches, weight=0.6))[0] == "hit"
+
+
+def test_recency_bonus_lifts_a_new_release_even_without_personalization() -> None:
+    # Last.fm scores 1, .75, .5, .25, 0; the bonus lifts "new" from 0 to .3,
+    # past "d" but not past "c".
+    matches = [_match("a"), _match("b"), _match("c"), _match("d"), _match("new", year=2026)]
+
+    reranked = rerank_matches(matches, weight=0.0, recency_bonus=0.3, current_year=2026)
+
+    assert _ids(reranked) == ["a", "b", "c", "new", "d"]
+
+
+@pytest.mark.parametrize(
+    ("year", "lifted"),
+    [
+        (2027, True),  # tagged ahead of time: treated as this year's release
+        (2026, True),  # full bonus .9
+        (2025, True),  # 2/3 of it: .6
+        (2024, False),  # 1/3 of it: .3
+        (2023, False),  # faded out
+        (None, False),  # no year tag
+    ],
+)
+def test_recency_bonus_fades_over_three_years(year: int | None, lifted: bool) -> None:
+    # Last.fm scores 1, .5, 0: "new" needs more than .5 to pass "b".
+    matches = [_match("a"), _match("b"), _match("new", year=year)]
+
+    reranked = rerank_matches(matches, weight=0.0, recency_bonus=0.9, current_year=2026)
+
+    assert _ids(reranked) == (["a", "new", "b"] if lifted else ["a", "b", "new"])

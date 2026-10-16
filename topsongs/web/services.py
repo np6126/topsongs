@@ -156,6 +156,8 @@ def config_view() -> dict:
             display = ", ".join(value) if value else "—"
         elif isinstance(value, bool):
             display = "true" if value else "false"
+        elif value is None:
+            display = "—"
         else:
             display = str(value)
         fields.append({"key": alias, "value": display, "secret": secret})

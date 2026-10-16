@@ -95,11 +95,17 @@ Playlists are built per Jellyfin user, so `topsongs` does not simply copy the La
 
 | Value | Behavior |
 | :---: | --- |
-| `0.0` | Pure Last.fm order. |
+| `0.0` | Last.fm order, apart from the [new-release bonus](#new-releases). |
 | `0.6` (default) | Personal taste leads; Last.fm decides where the user has little listening history. |
 | `1.0` | Order driven almost entirely by the user's own play counts and favorites. |
 
 When `APPEND_UNMATCHED_SONGS` is enabled and `PERSONALIZATION_WEIGHT` is above `0.0`, the appended local tracks are ordered by play count as well.
+
+### New releases
+
+Last.fm's top tracks and Jellyfin's play counts are both all-time totals, so a new album ranks low just because it has had little time to collect plays. `RECENCY_BONUS` adds a score bonus to a track released this year. The bonus fades to 2/3 for last year's releases and 1/3 for the year before, and older tracks get nothing. The release year is the track's year tag in Jellyfin; tracks without one get no bonus. Unset, empty or `0` means no bonus; `appdata/.env.example` sets `0.3`.
+
+The bonus is on the same 0–1 scale as the blended score above. With `0.3`, the strongest tracks of a brand-new album reach the upper part of the playlist while the established hits stay on top. The bonus does not reach local tracks that Last.fm does not list, which stay in the appended block. Remastered reissues tagged with the reissue year are boosted like new releases.
 
 ## Configuration
 
@@ -122,6 +128,7 @@ RUN_CONCURRENCY=1
 MIN_REQUEST_INTERVAL=0
 MAX_PROVIDER_TRACKS=200
 PERSONALIZATION_WEIGHT=0.6
+RECENCY_BONUS=0.3
 PLAYLIST_NAME_PREFIX=Top Songs - 
 APPEND_UNMATCHED_SONGS=true
 DRY_RUN=false
@@ -159,7 +166,8 @@ Characters invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in t
 | `RUN_CONCURRENCY` | no | `1` | Number of artists planned in parallel per user. `1` keeps the sequential behavior; higher values process more artists at once, which can shorten a run when Last.fm fetches dominate. Clamped to `1`–`16`. |
 | `MIN_REQUEST_INTERVAL` | no | `0` | Minimum seconds between Last.fm requests, enforced across all threads. `0` disables throttling; raise it if Last.fm returns HTTP 429 under concurrency. |
 | `MAX_PROVIDER_TRACKS` | no | `200` | Maximum Last.fm top tracks to fetch and consider per artist. |
-| `PERSONALIZATION_WEIGHT` | no | `0.6` | How much each user's own Jellyfin listening reorders a playlist, from `0.0` (pure Last.fm order) to `1.0` (purely personal). Clamped to `0.0`–`1.0`. See [Personalized ranking](#personalized-ranking). |
+| `PERSONALIZATION_WEIGHT` | no | `0.6` | How much each user's own Jellyfin listening reorders a playlist, from `0.0` (Last.fm order) to `1.0` (purely personal). Clamped to `0.0`–`1.0`. See [Personalized ranking](#personalized-ranking). |
+| `RECENCY_BONUS` | no | empty | Score bonus for recent releases, fading out over three years; `0.3` is a good start. Empty, `0` or `0.0` means no bonus. Clamped to `0.0`–`1.0`. See [New releases](#new-releases). |
 | `PLAYLIST_NAME_PREFIX` | no | `Top Songs - ` | Prefix used for managed playlist names such as `Top Songs - Powerwolf`. Only playlists with this prefix are considered managed and eligible for cleanup. Ignored when `PLAYLIST_TAG_MANAGED` is on. |
 | `PLAYLIST_TAG_MANAGED` | no | `false` | When `true`, managed playlists are identified by a Jellyfin tag instead of the name prefix, so names can be bare (`Powerwolf` instead of `Top Songs - Powerwolf`). See [Tag-managed playlists](#tag-managed-playlists). |
 | `PLAYLIST_MANAGED_TAG` | no | `topsongs` | The Jellyfin tag applied to, and used to recognize, managed playlists when `PLAYLIST_TAG_MANAGED` is on. |
@@ -337,4 +345,4 @@ Sensitive or private data may appear in:
 
 ## License
 
-`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.2.3.
+`topsongs` is released under the [Apache-2.0](LICENSE) license. Current version: 0.2.5.
