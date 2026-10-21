@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-10-21
+
+### Fixed
+- One playlist per band when Jellyfin holds the band as two artists whose
+  names differ only in case or punctuation, e.g. `Blackmore's Night` with a
+  straight and with a typographic apostrophe after a metadata refresh. Both
+  return the same tracks, so every user got two identical playlists. Now only
+  the first artist gets one and the duplicate's old playlist is removed; the
+  duplicate is logged as `event=artist_duplicate` and noted in the report.
+  Look-alike names with other tracks, and artists that only share a duet
+  album, still get their own playlists.
+
 ## [0.2.5] - 2026-10-16
 
 ### Added
@@ -110,6 +122,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   also runnable as a plain Python CLI.
 - Allow/deny filters for artists, users, and library paths.
 
+[0.2.6]: https://github.com/np6126/topsongs/releases/tag/v0.2.6
 [0.2.5]: https://github.com/np6126/topsongs/releases/tag/v0.2.5
 [0.2.4]: https://github.com/np6126/topsongs/releases/tag/v0.2.4
 [0.2.3]: https://github.com/np6126/topsongs/releases/tag/v0.2.3

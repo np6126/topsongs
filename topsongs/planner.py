@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from functools import partial
 from typing import NamedTuple
 
 from .config import Settings
@@ -36,6 +39,24 @@ class _ArtistCounts(NamedTuple):
     eligible: int
     planned: int
     failed: int
+
+
+class _PreparedArtist(NamedTuple):
+    artist: JellyfinArtist
+    plan: ArtistPlan
+    # Local tracks left after the library-path and short-track filters.
+    local_tracks: list[JellyfinTrack]
+
+
+def _spelling_key(name: str) -> str:
+    """Fold case and punctuation out of an artist name.
+
+    Not normalize_name: that also drops diacritics, which would make
+    "Motörhead" and "Motorhead" one name. A name made only of punctuation
+    (e.g. "!!!") keeps its exact spelling.
+    """
+    folded = re.sub(r"[\W_]+", " ", unicodedata.normalize("NFC", name).casefold())
+    return folded.strip() or name
 
 
 class Planner:
@@ -159,19 +180,19 @@ class Planner:
             user, filtered, existing_playlists
         )
 
-        computed: dict[int, ArtistPlan] = {}
         with ThreadPoolExecutor(max_workers=self.settings.run_concurrency) as executor:
-            futures: dict[Future, int] = {
-                executor.submit(
-                    self._plan_for_artist_safe, user, artist, existing_playlists
-                ): index
-                for index, artist in runnable
-            }
-            for future in as_completed(futures):
-                computed[futures[future]] = future.result()
+            fetched = list(
+                executor.map(partial(self._fetch_tracks, user), [a for _, a in runnable])
+            )
+            to_finish, settled_plans = self._prepare_artists(user, runnable, fetched)
+            finished = executor.map(
+                partial(self._finish_artist_safe, user, existing_playlists=existing_playlists),
+                to_finish.values(),
+            )
+            computed = dict(zip(to_finish, finished, strict=True))
 
-        by_index = {**collision_plans, **computed}
-        # A lost future would silently drop an artist; fail loudly instead.
+        by_index = {**collision_plans, **settled_plans, **computed}
+        # A lost result would silently drop an artist; fail loudly instead.
         assert len(by_index) == len(filtered)
         artist_plans = [by_index[index] for index in range(len(filtered))]
 
@@ -246,28 +267,84 @@ class Planner:
             runnable.append((index, artist))
         return runnable, collision_plans, protected_names
 
-    def _plan_for_artist_safe(
-        self,
-        user: JellyfinUser,
-        artist: JellyfinArtist,
-        existing_playlists: dict[str, JellyfinPlaylist],
-    ) -> ArtistPlan:
-        """Run _plan_for_artist so a pool task never raises.
+    def _fetch_tracks(
+        self, user: JellyfinUser, artist: JellyfinArtist
+    ) -> list[JellyfinTrack] | Exception:
+        """Fetch an artist's tracks in the pool, returning a failure as a value.
 
-        future.result() would re-raise inside the orchestrator; catching here
-        keeps one artist's failure from aborting the others. KeyboardInterrupt
-        and SystemExit are BaseException and intentionally pass through.
+        executor.map would re-raise inside the orchestrator; returning the
+        exception keeps one artist's failure from aborting the others.
+        KeyboardInterrupt and SystemExit are BaseException and pass through.
         """
         try:
-            return self._plan_for_artist(user, artist, existing_playlists)
+            return self.jellyfin.get_tracks_for_artist(user.id, artist)
         except Exception as exc:
-            logger.exception(
-                "event=artist_failed user=%s artist=%s error=%s",
-                sanitize_untrusted_text(user.name),
-                sanitize_untrusted_text(artist.name),
-                exc,
+            return exc
+
+    def _prepare_artists(
+        self,
+        user: JellyfinUser,
+        runnable: list[tuple[int, JellyfinArtist]],
+        fetched: list[list[JellyfinTrack] | Exception],
+    ) -> tuple[dict[int, _PreparedArtist], dict[int, ArtistPlan]]:
+        """Sequential pass between the fetch and finish phases, in artist order.
+
+        Drops duplicates: Jellyfin can hold one band as two artists (seen live:
+        "Blackmore's Night" with ' and with U+2019). An eligible artist whose
+        name equals an earlier one's up to case and punctuation AND whose
+        local tracks are identical gets no playlist; its old one is left to
+        orphan cleanup. Both are required so that look-alike names with other
+        tracks, and artists sharing only a duet album, stay apart.
+
+        Returns the artists still to finish and the plans already settled
+        (failed, ineligible or duplicate), both keyed by artist index.
+        """
+        to_finish: dict[int, _PreparedArtist] = {}
+        settled: dict[int, ArtistPlan] = {}
+        # (spelling key, local track ids) -> first artist with that pair
+        claimed_by: dict[tuple[str, frozenset[str]], str] = {}
+        for (index, artist), tracks in zip(runnable, fetched, strict=True):
+            if isinstance(tracks, Exception):
+                settled[index] = self._failed_artist_plan(user, artist.name, tracks)
+                continue
+            prepared = self._prepare_artist(user, artist, tracks)
+            if not prepared.plan.eligible:
+                settled[index] = prepared.plan
+                continue
+            key = (
+                _spelling_key(artist.name),
+                frozenset(track.id for track in prepared.local_tracks),
             )
-            return self._failed_artist_plan(artist.name, exc)
+            if key in claimed_by:
+                first_artist = claimed_by[key]
+                logger.warning(
+                    "event=artist_duplicate user=%s artist=%s first_artist=%s",
+                    sanitize_untrusted_text(user.name),
+                    sanitize_untrusted_text(artist.name),
+                    sanitize_untrusted_text(first_artist),
+                )
+                prepared.plan.eligible = False
+                prepared.plan.notes.append(
+                    f"Duplicate of '{first_artist}' (same name up to case and punctuation, "
+                    "same local tracks), which already gets the playlist."
+                )
+                settled[index] = prepared.plan
+                continue
+            claimed_by[key] = artist.name
+            to_finish[index] = prepared
+        return to_finish, settled
+
+    def _finish_artist_safe(
+        self,
+        user: JellyfinUser,
+        prepared: _PreparedArtist,
+        existing_playlists: dict[str, JellyfinPlaylist],
+    ) -> ArtistPlan:
+        """Run _finish_artist so a pool task never raises (see _fetch_tracks)."""
+        try:
+            return self._finish_artist(user, prepared, existing_playlists)
+        except Exception as exc:
+            return self._failed_artist_plan(user, prepared.artist.name, exc)
 
     def _aggregate_artist_plans(
         self,
@@ -310,7 +387,20 @@ class Planner:
         artist,
         existing_playlists: dict[str, JellyfinPlaylist],
     ) -> ArtistPlan:
+        """Plan one artist on its own, without the cross-artist duplicate check."""
         all_local_tracks = self.jellyfin.get_tracks_for_artist(user.id, artist)
+        prepared = self._prepare_artist(user, artist, all_local_tracks)
+        if not prepared.plan.eligible:
+            return prepared.plan
+        return self._finish_artist(user, prepared, existing_playlists)
+
+    def _prepare_artist(
+        self,
+        user: JellyfinUser,
+        artist: JellyfinArtist,
+        all_local_tracks: list[JellyfinTrack],
+    ) -> _PreparedArtist:
+        """Filter the local tracks and decide eligibility (no I/O)."""
         path_filtered_tracks = self._library_path_filter.filter_tracks(all_local_tracks)
         local_tracks = self._filter_short_tracks(path_filtered_tracks)
         short_track_count = len(path_filtered_tracks) - len(local_tracks)
@@ -350,7 +440,16 @@ class Planner:
                 f"Skipped because local track count {local_count} is not greater than "
                 f"threshold {self.settings.min_tracks_per_artist}."
             )
-            return plan
+        return _PreparedArtist(artist, plan, local_tracks)
+
+    def _finish_artist(
+        self,
+        user: JellyfinUser,
+        prepared: _PreparedArtist,
+        existing_playlists: dict[str, JellyfinPlaylist],
+    ) -> ArtistPlan:
+        """Rank an eligible artist's tracks and apply its playlist."""
+        artist, plan, local_tracks = prepared
 
         try:
             provider_tracks = self._get_provider_tracks(artist.name)
@@ -410,7 +509,7 @@ class Planner:
             "matched=%s unmatched_local=%s duplicate_local=%s applied=%s",
             sanitize_untrusted_text(user.name),
             sanitize_untrusted_text(artist.name),
-            local_count,
+            plan.local_track_count,
             len(provider_tracks),
             len(matches),
             len(appended),
@@ -432,7 +531,16 @@ class Planner:
             provider=self.provider.name,
         )
 
-    def _failed_artist_plan(self, artist_name: str, exc: Exception) -> ArtistPlan:
+    def _failed_artist_plan(
+        self, user: JellyfinUser, artist_name: str, exc: Exception
+    ) -> ArtistPlan:
+        logger.error(
+            "event=artist_failed user=%s artist=%s error=%s",
+            sanitize_untrusted_text(user.name),
+            sanitize_untrusted_text(artist_name),
+            exc,
+            exc_info=exc,
+        )
         return ArtistPlan(
             artist=artist_name,
             local_track_count=0,

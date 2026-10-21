@@ -1,3 +1,4 @@
+import itertools
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
@@ -1043,6 +1044,244 @@ class ConcurrencyPlannerTests(unittest.TestCase):
         self.assertEqual(jellyfin.deleted, [])
         loser = next(plan for plan in user_plan.artists if plan.artist == "A_B")
         self.assertTrue(any("collision" in note for note in loser.notes))
+
+
+def _track_ids(prefix: str, count: int = 11) -> list[str]:
+    return [f"{prefix}{i}" for i in range(count)]
+
+
+class LibraryJellyfin:
+    """Stateful Jellyfin fake: playlists persist across runs as on the server.
+
+    ``library`` maps artist name -> track ids. Two names sharing one list model
+    a band that Jellyfin holds as two artists.
+    """
+
+    def __init__(self, library, playlists=(), failing=()) -> None:
+        self.library = library
+        self.playlists = {playlist.id: playlist for playlist in playlists}
+        self.items: dict[str, list[str]] = {}
+        self.failing = set(failing)
+        self.created: list[str] = []
+        self.deleted: list[str] = []
+        self._ids = itertools.count(1)
+
+    def get_users(self):
+        return [JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())]
+
+    def get_artists(self, user_id):
+        return [JellyfinArtist(id=f"a{i}", name=name) for i, name in enumerate(self.library)]
+
+    def get_playlists_for_user(self, user_id):
+        return list(self.playlists.values())
+
+    def get_tracks_for_artist(self, user_id, artist):
+        if artist.name in self.failing:
+            raise RuntimeError(f"jellyfin down for {artist.name}")
+        return [
+            JellyfinTrack(id=track_id, name=track_id, path=f"/music/{track_id}.flac")
+            for track_id in self.library[artist.name]
+        ]
+
+    def create_playlist(self, user_id, playlist_name, item_ids):
+        playlist_id = f"p{next(self._ids)}"
+        self.playlists[playlist_id] = JellyfinPlaylist(id=playlist_id, name=playlist_name)
+        self.items[playlist_id] = list(item_ids)
+        self.created.append(playlist_name)
+        return playlist_id
+
+    def add_managed_tag(self, user_id, playlist_id, tag):
+        self.playlists[playlist_id].tags.append(tag)
+
+    def delete_playlist(self, playlist_id):
+        del self.playlists[playlist_id]
+        self.items.pop(playlist_id, None)
+        self.deleted.append(playlist_id)
+
+    def snapshot(self) -> list[tuple]:
+        """Playlists as (name, tags, ordered item ids), independent of ids."""
+        return sorted(
+            (p.name, tuple(p.tags), tuple(self.items.get(p.id, ())))
+            for p in self.playlists.values()
+        )
+
+
+class LibraryProvider:
+    """Last.fm stub: an artist's top tracks are its first five, reversed."""
+
+    name = "lastfm"
+
+    def __init__(self, library) -> None:
+        self.library = library
+
+    def get_top_tracks(self, artist_name):
+        titles = list(reversed(self.library[artist_name][:5]))
+        return [ProviderTrack(title=title, rank=rank) for rank, title in enumerate(titles, 1)]
+
+
+def _settings(base=TagManagedSettings, run_concurrency: int = 1):
+    return type("DuplicateSettings", (base,), {"run_concurrency": run_concurrency})()
+
+
+def _plan_user(jellyfin: LibraryJellyfin, settings=None):
+    """Plan the fake's only user, with Last.fm answering from the same library."""
+    planner = Planner(
+        settings or _settings(), jellyfin=jellyfin, provider=LibraryProvider(jellyfin.library)
+    )
+    return planner._plan_for_user(jellyfin.get_users()[0])
+
+
+class DuplicateArtistTests(unittest.TestCase):
+    """One band held by Jellyfin as two artists: same name up to case and
+    punctuation, identical tracks."""
+
+    def test_duplicate_artists_share_one_playlist(self) -> None:
+        blackmore, hammerfall, motley = _track_ids("bn"), _track_ids("hf"), _track_ids("mc")
+        library = {
+            "Blackmore's Night": blackmore,
+            "Blackmore’s Night": blackmore,  # typographic apostrophe
+            "HAMMERFALL": hammerfall,
+            "HammerFall": hammerfall,
+            "Mötley Crüe": motley,  # composed (NFC)
+            "Mötley Crüe": motley,  # decomposed (NFD)
+        }
+        winners = ["Blackmore's Night", "HAMMERFALL", "Mötley Crüe"]
+        for base, prefix, tags in (
+            (TagManagedSettings, "", ["topsongs"]),
+            (SettingsStub, "Top Songs - ", []),
+        ):
+            with self.subTest(prefix=prefix):
+                jellyfin = LibraryJellyfin(
+                    library,
+                    playlists=[
+                        JellyfinPlaylist(id="old1", name=f"{prefix}Blackmore's Night", tags=tags),
+                        JellyfinPlaylist(id="old2", name=f"{prefix}Blackmore’s Night", tags=tags),
+                    ],
+                )
+                user_plan = _plan_user(jellyfin, _settings(base))
+
+                self.assertEqual(sorted(jellyfin.created), sorted(prefix + w for w in winners))
+                # old1 is replaced by the winner; old2, the duplicate's, is an orphan.
+                self.assertEqual(sorted(jellyfin.deleted), ["old1", "old2"])
+                self.assertEqual(user_plan.orphan_deleted_count, 1)
+                self.assertEqual(user_plan.eligible_artist_count, 3)
+                for plan in user_plan.artists:
+                    if plan.artist in winners:
+                        continue
+                    self.assertIsNone(plan.playlist_plan)
+                    self.assertFalse(plan.eligible)
+                    self.assertTrue(any("Duplicate of" in n for n in plan.notes))
+
+    def test_name_and_tracks_must_both_match(self) -> None:
+        """Look-alike names with other tracks, a diacritic variant, two artists
+        sharing only a duet album and two all-punctuation names each keep
+        their own playlist."""
+        duet = _track_ids("duet")
+        library = {
+            "Blackmore's Night": _track_ids("bn"),
+            "Blackmore’s Night": _track_ids("bn2"),  # same name, other tracks
+            "Motörhead": _track_ids("mh"),
+            "Motorhead": _track_ids("mh"),  # same tracks, name differs by a letter
+            "Jay-Z": duet,
+            "Kanye West": duet,  # same tracks, different name
+            "!!!": _track_ids("pn"),
+            "+++": _track_ids("pn"),  # nothing left to compare once punctuation goes
+        }
+        jellyfin = LibraryJellyfin(library)
+
+        with self.assertNoLogs("topsongs.planner", level="WARNING"):
+            user_plan = _plan_user(jellyfin)
+
+        self.assertEqual(sorted(jellyfin.created), sorted(library))
+        self.assertEqual(user_plan.planned_playlist_count, 8)
+
+    def test_duplicate_check_ignores_ineligible_artists(self) -> None:
+        """Below the track threshold nothing gets a playlist, so no duplicate
+        warning either (keeps the run log free of one-track artists)."""
+        library = {"Destiny's Child": ["dc0"], "Destiny’s Child": ["dc0"]}
+        jellyfin = LibraryJellyfin(library)
+
+        with self.assertNoLogs("topsongs.planner", level="WARNING"):
+            user_plan = _plan_user(jellyfin)
+
+        for plan in user_plan.artists:
+            self.assertFalse(any("Duplicate of" in n for n in plan.notes))
+
+    def test_first_artist_in_order_wins_under_concurrency(self) -> None:
+        """The first artist's fetch finishes last, yet it still wins."""
+        tracks = _track_ids("bn")
+        library = {"Blackmore's Night": tracks, "Blackmore’s Night": tracks}
+        jellyfin = LibraryJellyfin(library)
+        second_fetched = threading.Event()
+        fetch = jellyfin.get_tracks_for_artist
+
+        def first_fetch_finishes_last(user_id, artist):
+            if artist.name == "Blackmore's Night":
+                self.assertTrue(second_fetched.wait(timeout=5))
+                return fetch(user_id, artist)
+            tracks = fetch(user_id, artist)
+            second_fetched.set()
+            return tracks
+
+        jellyfin.get_tracks_for_artist = first_fetch_finishes_last
+
+        user_plan = _plan_user(jellyfin, _settings(run_concurrency=2))
+
+        self.assertEqual(user_plan.failed_artist_count, 0)
+        self.assertEqual(jellyfin.created, ["Blackmore's Night"])
+
+    def test_track_fetch_failure_is_isolated_and_keeps_its_playlist(self) -> None:
+        library = {"Alpha": _track_ids("al"), "Beta": _track_ids("be")}
+        jellyfin = LibraryJellyfin(
+            library,
+            playlists=[JellyfinPlaylist(id="old-alpha", name="Alpha", tags=["topsongs"])],
+            failing={"Alpha"},
+        )
+
+        user_plan = _plan_user(jellyfin, _settings(run_concurrency=2))
+
+        self.assertEqual(user_plan.failed_artist_count, 1)
+        self.assertEqual(user_plan.artists[0].error, "jellyfin down for Alpha")
+        self.assertEqual(jellyfin.created, ["Beta"])
+        self.assertEqual(jellyfin.deleted, [])  # the failed artist's playlist survives
+
+    def test_repeated_runs_give_identical_results(self) -> None:
+        """Unchanged Jellyfin and Last.fm data: every run after the first leaves
+        the same playlists with the same tracks in the same order, whatever the
+        concurrency, and the first run's duplicate cleanup sticks."""
+        blackmore = _track_ids("bn")
+        library = {
+            "A/B": _track_ids("ab"),
+            "A_B": _track_ids("a_b"),  # same playlist name as A/B, other tracks
+            "Blackmore's Night": blackmore,
+            "Blackmore’s Night": blackmore,
+            "Nightwish": _track_ids("nw", 20),
+            "Sabaton": _track_ids("sb", 15),
+        }
+        jellyfin = LibraryJellyfin(
+            library,
+            playlists=[
+                JellyfinPlaylist(id="old1", name="Blackmore's Night", tags=["topsongs"]),
+                JellyfinPlaylist(id="old2", name="Blackmore’s Night", tags=["topsongs"]),
+            ],
+        )
+        provider = LibraryProvider(library)
+
+        snapshots, reports = [], []
+        for concurrency in (1, 4, 1, 4):
+            planner = Planner(_settings(run_concurrency=concurrency), jellyfin, provider)
+            reports.append(planner.run())
+            snapshots.append(jellyfin.snapshot())
+
+        names = [name for name, _, _ in snapshots[0]]
+        self.assertEqual(names, ["A_B", "Blackmore's Night", "Nightwish", "Sabaton"])
+        for snapshot in snapshots[1:]:
+            self.assertEqual(snapshot, snapshots[0])
+        self.assertEqual(reports[0].orphan_deleted_count, 1)
+        for report in reports[1:]:
+            self.assertEqual(report.created_playlist_count, 0)
+            self.assertEqual(report.replaced_playlist_count, 4)
+            self.assertEqual(report.orphan_deleted_count, 0)
 
 
 if __name__ == "__main__":
