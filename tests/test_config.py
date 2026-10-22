@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from topsongs.config import Settings
 
 
@@ -22,14 +25,14 @@ def test_max_provider_tracks_can_be_configured(monkeypatch) -> None:
     assert settings.max_provider_tracks == 75
 
 
-def test_playlist_name_prefix_defaults_to_top_songs(monkeypatch) -> None:
+def test_playlist_names_are_bare_by_default(monkeypatch) -> None:
     monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
     monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
     monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
 
     settings = Settings()
 
-    assert settings.playlist_name_prefix == "Top Songs - "
+    assert settings.playlist_name_prefix == ""
 
 
 def test_playlist_name_prefix_can_be_configured(monkeypatch) -> None:
@@ -43,17 +46,7 @@ def test_playlist_name_prefix_can_be_configured(monkeypatch) -> None:
     assert settings.playlist_name_prefix == "Best Of - "
 
 
-def test_playlist_tag_managed_defaults_to_false(monkeypatch) -> None:
-    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
-    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
-    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
-
-    settings = Settings()
-
-    assert settings.playlist_tag_managed is False
-
-
-def test_playlist_tag_managed_can_be_enabled(monkeypatch) -> None:
+def test_removed_playlist_tag_managed_setting_is_ignored(monkeypatch) -> None:
     monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
     monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
     monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
@@ -61,7 +54,7 @@ def test_playlist_tag_managed_can_be_enabled(monkeypatch) -> None:
 
     settings = Settings()
 
-    assert settings.playlist_tag_managed is True
+    assert not hasattr(settings, "playlist_tag_managed")
 
 
 def test_playlist_managed_tag_defaults_to_topsongs(monkeypatch) -> None:
@@ -266,3 +259,33 @@ def test_min_request_interval_is_clamped_to_non_negative(monkeypatch) -> None:
     settings = Settings()
 
     assert settings.min_request_interval == 0.0
+
+
+def _base_env(monkeypatch) -> None:
+    monkeypatch.setenv("JELLYFIN_URL", "http://jellyfin:8096")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "jellyfin-key")
+    monkeypatch.setenv("LASTFM_API_KEY", "lastfm-key")
+
+
+def test_live_settings_default_off_with_live_prefix(monkeypatch) -> None:
+    _base_env(monkeypatch)
+
+    settings = Settings()
+
+    assert settings.setlistfm_api_key is None
+    assert settings.live_playlist_prefix == "Live - "
+
+
+def test_prefixes_may_overlap_since_the_tag_marks_live_playlists(monkeypatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("PLAYLIST_NAME_PREFIX", "Live")
+
+    assert Settings().live_playlist_prefix == "Live - "
+
+
+def test_managed_tag_must_not_be_the_live_tag(monkeypatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("PLAYLIST_MANAGED_TAG", "topsongs-live")
+
+    with pytest.raises(ValidationError, match="PLAYLIST_MANAGED_TAG"):
+        Settings()

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class JellyfinArtist(BaseModel):
     id: str
     name: str
     sort_name: str | None = None
+    # MusicBrainz artist id from the tags; setlist.fm looks artists up by it.
+    mbid: str | None = None
 
 
 class JellyfinUserPolicy(BaseModel):
@@ -168,6 +170,83 @@ class ArtistGap(BaseModel):
     @property
     def complete_album_count(self) -> int:
         return sum(1 for album in self.albums if album.is_complete)
+
+
+class ConcertSong(BaseModel):
+    title: str
+    encore: bool = False
+    # Original artist when the band played someone else's song.
+    cover_artist: str | None = None
+
+
+class Concert(BaseModel):
+    """One setlist.fm setlist; songs in play order, tape intros left out."""
+
+    id: str
+    url: str | None = None
+    event_date: date | None = None
+    artist_name: str
+    venue_id: str | None = None
+    venue_name: str = ""
+    city: str | None = None
+    country_code: str | None = None
+    tour: str | None = None
+    songs: list[ConcertSong] = Field(default_factory=list)
+
+    @property
+    def venue_key(self) -> str:
+        return self.venue_id or f"{self.venue_name}|{self.city}"
+
+    @property
+    def place(self) -> str:
+        return ", ".join(part for part in (self.venue_name, self.city) if part)
+
+
+class ConcertFilter(BaseModel):
+    """Narrows the concert list via setlist.fm's search; blank fields are unset."""
+
+    tour: str | None = None
+    year: int | None = None
+    venue: str | None = None
+    city: str | None = None
+    country: str | None = None
+
+    @field_validator("tour", "venue", "city", "country")
+    @classmethod
+    def blank_is_unset(cls, value: str | None) -> str | None:
+        return (value or "").strip() or None
+
+    def is_set(self) -> bool:
+        return any(self.model_dump().values())
+
+
+class SetlistArtist(BaseModel):
+    mbid: str
+    name: str
+    disambiguation: str | None = None
+
+
+class MixSong(BaseModel):
+    title: str
+    # Concerts of the selection the song was played at.
+    play_count: int
+    encore: bool = False
+    cover_artist: str | None = None
+    jellyfin_item_id: str | None = None
+
+
+class LiveMix(BaseModel):
+    artist_name: str
+    concerts: list[Concert]
+    # Played at least min_share of the concerts, most played first.
+    songs: list[MixSong]
+    # Played, but at fewer concerts than min_share asks for.
+    below_threshold: list[MixSong] = Field(default_factory=list)
+    min_share: float
+
+    @property
+    def matched(self) -> list[MixSong]:
+        return [song for song in self.songs if song.jellyfin_item_id]
 
 
 class RunReport(BaseModel):

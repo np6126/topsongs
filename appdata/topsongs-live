@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# topsongs-live wrapper — a concert, or a mix of the last concerts, as a playlist.
+#
+# Runs the in-container `topsongs-live` CLI: reads the artist's setlists from
+# setlist.fm (SETLISTFM_API_KEY) and creates a Jellyfin playlist from the songs in
+# the library. It only creates playlists, never replaces or deletes one. Run from
+# this deploy dir (next to docker-compose.yml).
+#
+# Usage:
+#   ./topsongs-live "Metallica" --list
+#   ./topsongs-live "Metallica" --last 5 --per-venue
+set -euo pipefail
+
+RUNTIME_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+cd "$RUNTIME_DIR"
+exec docker compose exec app topsongs-live "$@"

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import ClientCM, wire_cli
 
 from topsongs import cli
 from topsongs.models import ArtistPlan, RunReport, UserPlan
@@ -12,40 +13,15 @@ def test_main_passes_max_tracks_only_to_lastfm_provider(monkeypatch, tmp_path) -
     jellyfin_kwargs = {}
     lastfm_kwargs = {}
 
-    class SettingsStub:
-        jellyfin_url = "http://jellyfin:8096"
-        jellyfin_api_key = "jellyfin-key"
-        lastfm_api_key = "lastfm-key"
-        request_timeout_seconds = 20
-        request_max_retries = 2
-        retry_backoff_seconds = 1.0
-        min_request_interval = 0.0
-        max_provider_tracks = 75
-        state_dir = tmp_path
-        log_level = "INFO"
-        dry_run = False
-
-    class JellyfinClientStub:
+    class JellyfinClientStub(ClientCM):
         def __init__(self, **kwargs) -> None:
             jellyfin_kwargs.update(kwargs)
 
-        def __enter__(self) -> "JellyfinClientStub":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> bool:
-            return False
-
-    class LastFmProviderStub:
+    class LastFmProviderStub(ClientCM):
         name = "lastfm"
 
         def __init__(self, **kwargs) -> None:
             lastfm_kwargs.update(kwargs)
-
-        def __enter__(self) -> "LastFmProviderStub":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> bool:
-            return False
 
     class PlannerStub:
         def __init__(self, settings, jellyfin, provider) -> None:
@@ -61,12 +37,10 @@ def test_main_passes_max_tracks_only_to_lastfm_provider(monkeypatch, tmp_path) -
         def write(self, report: RunReport) -> Path:
             return tmp_path / "last_run.txt"
 
-    monkeypatch.setattr(cli, "Settings", SettingsStub)
-    monkeypatch.setattr(cli, "JellyfinClient", JellyfinClientStub)
+    wire_cli(monkeypatch, cli, tmp_path, JellyfinClientStub)
     monkeypatch.setattr(cli, "LastFmProvider", LastFmProviderStub)
     monkeypatch.setattr(cli, "Planner", PlannerStub)
     monkeypatch.setattr(cli, "Reporter", ReporterStub)
-    monkeypatch.setattr(cli, "configure_logging", lambda level: None)
     monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
 
     assert cli.main([]) == 0
@@ -140,19 +114,6 @@ def test_unmatched_summary_logs_details(monkeypatch) -> None:
 def test_main_returns_nonzero_when_artists_failed(monkeypatch, tmp_path) -> None:
     """Fix 2: non-zero exit code when failed_artist_count > 0."""
 
-    class SettingsStub:
-        jellyfin_url = "http://jellyfin:8096"
-        jellyfin_api_key = "jellyfin-key"
-        lastfm_api_key = "lastfm-key"
-        request_timeout_seconds = 20
-        request_max_retries = 2
-        retry_backoff_seconds = 1.0
-        min_request_interval = 0.0
-        max_provider_tracks = 75
-        state_dir = tmp_path
-        log_level = "INFO"
-        dry_run = False
-
     report = RunReport.empty(provider="lastfm")
     report = report.model_copy(update={"failed_artist_count": 1})
 
@@ -170,12 +131,10 @@ def test_main_returns_nonzero_when_artists_failed(monkeypatch, tmp_path) -> None
         def write(self, r: RunReport) -> Path:
             return tmp_path / "last_run.txt"
 
-    monkeypatch.setattr(cli, "Settings", SettingsStub)
-    monkeypatch.setattr(cli, "JellyfinClient", MagicMock)
+    wire_cli(monkeypatch, cli, tmp_path, MagicMock)
     monkeypatch.setattr(cli, "LastFmProvider", MagicMock)
     monkeypatch.setattr(cli, "Planner", PlannerStub)
     monkeypatch.setattr(cli, "Reporter", ReporterStub)
-    monkeypatch.setattr(cli, "configure_logging", lambda level: None)
     monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
 
     assert cli.main([]) == 1
@@ -183,19 +142,6 @@ def test_main_returns_nonzero_when_artists_failed(monkeypatch, tmp_path) -> None
 
 def test_main_writes_report_and_returns_nonzero_when_planner_raises(monkeypatch, tmp_path) -> None:
     """Fix 3: last_run.txt must be written and exit code must be 1 even if planner.run() throws."""
-
-    class SettingsStub:
-        jellyfin_url = "http://jellyfin:8096"
-        jellyfin_api_key = "jellyfin-key"
-        lastfm_api_key = "lastfm-key"
-        request_timeout_seconds = 20
-        request_max_retries = 2
-        retry_backoff_seconds = 1.0
-        min_request_interval = 0.0
-        max_provider_tracks = 75
-        state_dir = tmp_path
-        log_level = "INFO"
-        dry_run = False
 
     written_reports = []
 
@@ -214,12 +160,10 @@ def test_main_writes_report_and_returns_nonzero_when_planner_raises(monkeypatch,
             written_reports.append(report)
             return tmp_path / "last_run.txt"
 
-    monkeypatch.setattr(cli, "Settings", SettingsStub)
-    monkeypatch.setattr(cli, "JellyfinClient", MagicMock)
+    wire_cli(monkeypatch, cli, tmp_path, MagicMock)
     monkeypatch.setattr(cli, "LastFmProvider", MagicMock)
     monkeypatch.setattr(cli, "Planner", PlannerStub)
     monkeypatch.setattr(cli, "Reporter", ReporterStub)
-    monkeypatch.setattr(cli, "configure_logging", lambda level: None)
     monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
 
     result = cli.main([])
@@ -286,19 +230,6 @@ def test_dry_run_flag_reaches_the_planner(monkeypatch, tmp_path) -> None:
     """--dry-run must override DRY_RUN=false from the configuration."""
     seen = {}
 
-    class SettingsStub:
-        jellyfin_url = "http://jellyfin:8096"
-        jellyfin_api_key = "jellyfin-key"
-        lastfm_api_key = "lastfm-key"
-        request_timeout_seconds = 20
-        request_max_retries = 2
-        retry_backoff_seconds = 1.0
-        min_request_interval = 0.0
-        max_provider_tracks = 75
-        state_dir = tmp_path
-        log_level = "INFO"
-        dry_run = False
-
     class PlannerStub:
         def __init__(self, settings, jellyfin, provider) -> None:
             seen["dry_run"] = settings.dry_run
@@ -313,12 +244,10 @@ def test_dry_run_flag_reaches_the_planner(monkeypatch, tmp_path) -> None:
         def write(self, report: RunReport) -> Path:
             return tmp_path / "last_run.txt"
 
-    monkeypatch.setattr(cli, "Settings", SettingsStub)
-    monkeypatch.setattr(cli, "JellyfinClient", MagicMock)
+    wire_cli(monkeypatch, cli, tmp_path, MagicMock)
     monkeypatch.setattr(cli, "LastFmProvider", MagicMock)
     monkeypatch.setattr(cli, "Planner", PlannerStub)
     monkeypatch.setattr(cli, "Reporter", ReporterStub)
-    monkeypatch.setattr(cli, "configure_logging", lambda level: None)
     monkeypatch.setattr(cli, "acquire_run_lock", lambda state_dir: _NullContext())
 
     assert cli.main(["--dry-run"]) == 0

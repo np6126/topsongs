@@ -21,7 +21,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import i18n
 from .config import Settings
+from .i18n import t
 from .jellyfin import JellyfinClient
 from .logging_setup import configure_logging
 from .models import RunReport
@@ -88,25 +90,26 @@ def acquire_run_lock(state_dir: Path):
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topsongs",
-        description=(
-            "Baut für jeden Jellyfin-Benutzer je Artist eine Playlist aus den "
-            "Last.fm-Top-Tracks und ersetzt dabei die Playlists des Vorlaufs. "
-            "Konfiguriert wird über Umgebungsvariablen bzw. appdata/.env."
+        description=t(
+            "Builds one playlist per artist for every Jellyfin user from the Last.fm top "
+            "tracks, replacing the playlists of the previous run. Configured through "
+            "environment variables or appdata/.env."
         ),
-        epilog="Identisch aufrufbar als run-topsongs.",
+        epilog=t("Also available as run-topsongs."),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help=(
-            "Lauf nur planen und protokollieren, ohne Playlists in Jellyfin zu "
-            "ändern. Überschreibt DRY_RUN aus der Konfiguration."
+        help=t(
+            "Only plan and log the run, without changing playlists in Jellyfin. "
+            "Overrides DRY_RUN from the configuration."
         ),
     )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    i18n.use_configured_language()
     args = _build_parser().parse_args(argv)
     settings = Settings()
     if args.dry_run:

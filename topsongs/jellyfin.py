@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-import time
 from urllib.parse import urlencode
 
 import httpx
 
+from .http import REQUEST_ERRORS, send_with_retries
 from .models import (
     JellyfinArtist,
     JellyfinPlaylist,
@@ -69,7 +69,7 @@ class JellyfinClient:
             "UserId": user_id,
             "Recursive": "true",
             "SortBy": "SortName",
-            "Fields": "SortName",
+            "Fields": "SortName,ProviderIds",
         }
         items = self._get_all_items("/Artists/AlbumArtists", params=params)
         return [
@@ -77,6 +77,7 @@ class JellyfinClient:
                 id=item["Id"],
                 name=item.get("Name", ""),
                 sort_name=item.get("SortName"),
+                mbid=(item.get("ProviderIds") or {}).get("MusicBrainzArtist") or None,
             )
             for item in items
             if item.get("Id") and item.get("Name")
@@ -107,7 +108,7 @@ class JellyfinClient:
             "Recursive": "true",
             "IncludeItemTypes": "Playlist",
             "SortBy": "SortName",
-            # Tags identify topsongs-managed playlists in tag mode; the list
+            # Tags identify the playlists topsongs owns; the list
             # endpoint omits them unless explicitly requested.
             "Fields": "Tags",
         }
@@ -126,14 +127,18 @@ class JellyfinClient:
             if item.get("Id") and item.get("Name")
         ]
 
-    def create_playlist(self, user_id: str, playlist_name: str, item_ids: list[str]) -> str:
-        params = {
+    def create_playlist(
+        self, user_id: str, playlist_name: str, item_ids: list[str], public: bool = False
+    ) -> str:
+        # A public playlist is visible to every user, not only its owner.
+        body = {
             "Name": playlist_name,
-            "Ids": ",".join(item_ids),
+            "Ids": item_ids,
             "UserId": user_id,
             "MediaType": "Audio",
+            "IsPublic": public,
         }
-        payload = self._post("/Playlists", params=params)
+        payload = self._post_json("/Playlists", body)
         playlist_id = payload.get("Id")
         if not playlist_id:
             raise RuntimeError(f"Playlist creation for '{playlist_name}' did not return an Id.")
@@ -166,6 +171,13 @@ class JellyfinClient:
         dto["Tags"] = tags
         self._post_json(f"/Items/{playlist_id}", dto)
 
+    def set_overview(self, user_id: str, playlist_id: str, overview: str) -> None:
+        # Same UpdateItem round-trip as rename_playlist; Overview is the
+        # description Jellyfin shows on the playlist page.
+        dto = self._get(f"/Users/{user_id}/Items/{playlist_id}", params={})
+        dto["Overview"] = overview
+        self._post_json(f"/Items/{playlist_id}", dto)
+
     def _get_all_items(self, path: str, params: dict[str, str]) -> list[dict]:
         page_size = 500
         start_index = 0
@@ -187,23 +199,20 @@ class JellyfinClient:
         logger.debug("GET %s?%s", url, urlencode(params))
         return self._request_json("GET", url, params=params)
 
-    def _post(self, path: str, params: dict[str, str]) -> dict:
-        url = f"{self.base_url}{path}"
-        logger.debug("POST %s?%s", url, urlencode(params))
-        return self._request_json("POST", url, params=params)
-
-    def _post_json(self, path: str, body: dict) -> None:
+    def _post_json(self, path: str, body: dict) -> dict:
         url = f"{self.base_url}{path}"
         logger.debug("POST %s (json body)", url)
-        self._request("POST", url, params=None, json_body=body)
+        return self._request_json("POST", url, params=None, json_body=body)
 
     def _delete(self, path: str) -> None:
         url = f"{self.base_url}{path}"
         logger.debug("DELETE %s", url)
         self._request_no_content("DELETE", url)
 
-    def _request_json(self, method: str, url: str, params: dict[str, str]) -> dict:
-        response = self._request(method, url, params=params)
+    def _request_json(
+        self, method: str, url: str, params: dict[str, str] | None, json_body: dict | None = None
+    ) -> dict:
+        response = self._request(method, url, params=params, json_body=json_body)
         if not response.content:
             return {}
         return response.json()
@@ -218,36 +227,22 @@ class JellyfinClient:
         params: dict[str, str] | None,
         json_body: dict | None = None,
     ) -> httpx.Response:
-        last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                response = self._client.request(method, url, params=params, json=json_body)
-                response.raise_for_status()
-                return response
-            except (
-                httpx.TimeoutException,
-                httpx.NetworkError,
-                httpx.RemoteProtocolError,
-                httpx.HTTPStatusError,
-            ) as exc:
-                last_error = exc
-                should_retry = attempt < self.max_retries and _is_retryable_http_error(exc)
-                logger.warning(
-                    "service=jellyfin method=%s url=%s attempt=%s retry=%s error=%s",
-                    method,
-                    url,
-                    attempt + 1,
-                    should_retry,
-                    exc,
-                )
-                if not should_retry:
-                    break
-                time.sleep(self.retry_backoff_seconds * (attempt + 1))
+        def send() -> httpx.Response:
+            response = self._client.request(method, url, params=params, json=json_body)
+            response.raise_for_status()
+            return response
 
-        raise RuntimeError(
-            f"service=jellyfin method={method} url={url} "
-            f"message=request_failed error={last_error}"
-        )
+        try:
+            return send_with_retries(
+                send,
+                max_retries=self.max_retries,
+                backoff_seconds=self.retry_backoff_seconds,
+                log_context=f"service=jellyfin method={method} url={url}",
+            )
+        except REQUEST_ERRORS as exc:
+            raise RuntimeError(
+                f"service=jellyfin method={method} url={url} message=request_failed error={exc}"
+            ) from exc
 
     @staticmethod
     def _user_from_item(item: dict) -> JellyfinUser:
@@ -282,14 +277,3 @@ class JellyfinClient:
             is_favorite=bool(user_data.get("IsFavorite", False)),
         )
 
-
-def _is_retryable_http_error(exc: Exception) -> bool:
-    if isinstance(
-        exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
-    ):
-        # RemoteProtocolError surfaces when a pooled keep-alive connection was
-        # closed server-side while idle; the retry dials a fresh connection.
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
-    return False

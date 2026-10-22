@@ -15,10 +15,13 @@ import sys
 from dataclasses import dataclass
 
 from rich.console import Console
+from rich.markup import escape
 
+from . import i18n
 from .config import Settings
 from .discography import DiscographyCache, compute_artist_gap
 from .filters import NameFilter, UserFilter
+from .i18n import t
 from .jellyfin import JellyfinClient
 from .logging_setup import configure_logging
 from .missing_report import render_artist_gap, render_grand_total
@@ -48,26 +51,26 @@ class _ScanContext:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topsongs-missing",
-        description="Zeigt, welche Songs eines Künstlers in der Jellyfin-Bibliothek fehlen.",
+        description=t("Shows which songs of an artist are missing from the Jellyfin library."),
     )
     parser.add_argument(
         "artist",
         nargs="?",
-        help="Künstlername. Ohne Angabe werden alle Künstler der Bibliothek geprüft.",
+        help=t("Artist name. Without one, every artist in the library is checked."),
     )
     parser.add_argument(
         "--user",
-        help="Jellyfin-Benutzer, dessen Bibliothek geprüft wird. Standard: erster aktiver.",
+        help=t("Jellyfin user whose library is checked. Default: the first active one."),
     )
     parser.add_argument(
         "--all-types",
         action="store_true",
-        help="Auch Compilations und Live-Alben einbeziehen (sonst ausgeschlossen).",
+        help=t("Include compilations and live albums too (left out otherwise)."),
     )
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Den Diskografie-Cache ignorieren und frisch von Last.fm laden.",
+        help=t("Ignore the discography cache and load fresh from Last.fm."),
     )
     return parser
 
@@ -104,18 +107,19 @@ def _gap_for_artist(ctx: _ScanContext, artist: JellyfinArtist) -> ArtistGap:
     try:
         local_tracks = ctx.jellyfin.get_tracks_for_artist(ctx.user_id, artist)
     except Exception as exc:  # noqa: BLE001 - report any Jellyfin failure per artist
-        return ArtistGap(artist_name=artist.name, error=f"Jellyfin-Fehler: {exc}")
+        return ArtistGap(artist_name=artist.name, error=t("Jellyfin error: {error}", error=exc))
 
     scope = "all" if ctx.include_all_types else "studio"
     discography = ctx.cache.get(artist.name, scope) if ctx.cache is not None else None
     if discography is None:
         try:
-            with ctx.console.status(f"[dim]Lade Diskografie: {artist.name}…[/]"):
+            loading = t("Loading discography: {artist}…", artist=escape(artist.name))
+            with ctx.console.status(f"[dim]{loading}[/]"):
                 discography = ctx.provider.get_discography(
                     artist.name, include_all_types=ctx.include_all_types
                 )
         except LastFmError as exc:
-            return ArtistGap(artist_name=artist.name, error=f"Last.fm-Fehler: {exc}")
+            return ArtistGap(artist_name=artist.name, error=t("Last.fm error: {error}", error=exc))
         if ctx.cache is not None:
             ctx.cache.put(artist.name, scope, discography)
 
@@ -123,6 +127,7 @@ def _gap_for_artist(ctx: _ScanContext, artist: JellyfinArtist) -> ArtistGap:
 
 
 def main(argv: list[str] | None = None) -> int:
+    i18n.use_configured_language()
     args = _build_parser().parse_args(argv)
     settings = Settings()
     settings.state_dir.mkdir(parents=True, exist_ok=True)
@@ -156,31 +161,35 @@ def _scan(
     try:
         users = jellyfin.get_users()
     except Exception as exc:  # noqa: BLE001 - surface a clean message, not a traceback
-        console.print(f"[red]Jellyfin nicht erreichbar:[/] {exc}")
+        console.print(f"[red]{t('Jellyfin is not reachable:')}[/] {escape(str(exc))}")
         return 1
 
     user = _select_user(users, settings, args.user)
     if user is None:
         if args.user:
-            console.print(f"[red]Benutzer '{args.user}' nicht gefunden oder deaktiviert.[/]")
+            message = t("User '{name}' not found or disabled.", name=escape(args.user))
+            console.print(f"[red]{message}[/]")
         else:
-            console.print("[red]Kein passender Jellyfin-Benutzer gefunden.[/]")
+            console.print(f"[red]{t('No matching Jellyfin user found.')}[/]")
         return 1
 
     try:
         all_artists = jellyfin.get_artists(user.id)
     except Exception as exc:  # noqa: BLE001 - surface a clean message, not a traceback
-        console.print(f"[red]Künstler konnten nicht geladen werden:[/] {exc}")
+        console.print(f"[red]{t('Could not load the artists:')}[/] {escape(str(exc))}")
         return 1
 
     artists = _select_artists(all_artists, settings, args.artist)
     if not artists:
         if args.artist:
-            console.print(
-                f"[red]Künstler '{args.artist}' nicht in der Bibliothek von {user.name}.[/]"
+            message = t(
+                "'{artist}' is not in {user}'s library.",
+                artist=escape(args.artist),
+                user=escape(user.name),
             )
+            console.print(f"[red]{message}[/]")
         else:
-            console.print("[yellow]Keine Künstler zu prüfen.[/]")
+            console.print(f"[yellow]{t('No artists to check.')}[/]")
         return 1
 
     cache = (
@@ -191,9 +200,12 @@ def _scan(
         )
     )
 
-    console.print(
-        f"[dim]Prüfe {len(artists)} Künstler für Benutzer {user.name} (Quelle: Last.fm)…[/]\n"
+    checking = t(
+        "Checking {count} artists for user {user} (source: Last.fm)…",
+        count=len(artists),
+        user=escape(user.name),
     )
+    console.print(f"[dim]{checking}[/]\n")
 
     ctx = _ScanContext(
         jellyfin=jellyfin,

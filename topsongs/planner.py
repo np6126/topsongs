@@ -27,6 +27,7 @@ from .models import (
     UserPlan,
 )
 from .normalize import normalize_name
+from .ownership import LEGACY_PREFIX, is_live, is_nightly
 from .providers.base import TopSongsProvider
 from .providers.lastfm import LastFmError, LastFmNoTopTracksError, LastFmRateLimitError
 from .ranking import rerank_matches
@@ -170,10 +171,10 @@ class Planner:
         # Built once, then read-only while the pool runs: worker tasks only
         # .get() from it. _delete_orphan_playlists mutates it (del), which is
         # safe only because that step runs strictly after the pool has joined.
+        playlists = self.jellyfin.get_playlists_for_user(user.id)
+        self._adopt_legacy_playlists(user, playlists)
         existing_playlists = {
-            playlist.name: playlist
-            for playlist in self.jellyfin.get_playlists_for_user(user.id)
-            if self._is_managed(playlist)
+            playlist.name: playlist for playlist in playlists if self._is_managed(playlist)
         }
         filtered = [artist for artist in artists if self._artist_filter.matches(artist.name)]
         runnable, collision_plans, protected_names = self._resolve_collisions(
@@ -551,15 +552,45 @@ class Planner:
         )
 
     def _playlist_name(self, artist_name: str) -> str:
-        # Tag mode identifies managed playlists by their tag, so the name needs
-        # no prefix and can be bare.
-        prefix = "" if self.settings.playlist_tag_managed else self.settings.playlist_name_prefix
-        return f"{prefix}{sanitize_for_filename(artist_name)}"
+        return f"{self.settings.playlist_name_prefix}{sanitize_for_filename(artist_name)}"
 
     def _is_managed(self, playlist: JellyfinPlaylist) -> bool:
-        if self.settings.playlist_tag_managed:
-            return self.settings.playlist_managed_tag in playlist.tags
-        return playlist.name.startswith(self.settings.playlist_name_prefix)
+        return is_nightly(playlist, self.settings)
+
+    def _adopt_legacy_playlists(
+        self, user: JellyfinUser, playlists: list[JellyfinPlaylist]
+    ) -> None:
+        """Tag the playlists an older topsongs made for this user before tags.
+
+        Back then the name prefix marked them. A user without any tagged
+        playlist has had no run since, so their untagged playlists with the
+        prefix are taken over this once; later runs go by the tag alone.
+        """
+        tag = self.settings.playlist_managed_tag
+        if any(tag in playlist.tags for playlist in playlists):
+            return
+        prefix = self.settings.playlist_name_prefix or LEGACY_PREFIX
+        for playlist in playlists:
+            if not playlist.name.startswith(prefix) or is_live(playlist):
+                continue
+            if not self.settings.dry_run:
+                try:
+                    self.jellyfin.add_managed_tag(user.id, playlist.id, tag)
+                except Exception as exc:  # noqa: BLE001 - leave it untouched, keep going
+                    logger.warning(
+                        "event=legacy_playlist_adopt_failed user=%s playlist=%s error=%s",
+                        sanitize_untrusted_text(user.name),
+                        sanitize_untrusted_text(playlist.name),
+                        exc,
+                    )
+                    continue
+            playlist.tags.append(tag)
+            logger.info(
+                "event=legacy_playlist_adopted user=%s playlist=%s playlist_id=%s",
+                sanitize_untrusted_text(user.name),
+                sanitize_untrusted_text(playlist.name),
+                playlist.id,
+            )
 
     @staticmethod
     def _build_planned_tracks(matches: list[TrackMatch]) -> list[PlannedPlaylistTrack]:
@@ -661,21 +692,18 @@ class Planner:
             created_playlist_id = "dry-run"
         else:
             created_playlist_id = self.jellyfin.create_playlist(user.id, playlist_name, item_ids)
-            if self.settings.playlist_tag_managed:
-                try:
-                    self.jellyfin.add_managed_tag(
-                        user.id, created_playlist_id, self.settings.playlist_managed_tag
-                    )
-                except Exception:
-                    # In tag mode the tag is the only thing that makes a playlist
-                    # discoverable: an untagged playlist is invisible to every
-                    # future run, which can neither replace nor orphan-delete it.
-                    # Roll the just-created playlist back so a tag failure cannot
-                    # leak a permanent untagged duplicate, then fail this artist.
-                    self._rollback_untagged_playlist(
-                        user, playlist_name, created_playlist_id
-                    )
-                    raise
+            try:
+                self.jellyfin.add_managed_tag(
+                    user.id, created_playlist_id, self.settings.playlist_managed_tag
+                )
+            except Exception:
+                # The tag is the only thing that makes a playlist discoverable:
+                # an untagged playlist is invisible to every future run, which
+                # can neither replace nor orphan-delete it. Roll the just-created
+                # playlist back so a tag failure cannot leak a permanent untagged
+                # duplicate, then fail this artist.
+                self._rollback_untagged_playlist(user, playlist_name, created_playlist_id)
+                raise
             if existing_playlist is not None:
                 try:
                     self.jellyfin.delete_playlist(existing_playlist.id)

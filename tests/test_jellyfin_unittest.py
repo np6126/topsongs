@@ -1,8 +1,6 @@
 import unittest
 
-import httpx
-
-from topsongs.jellyfin import JellyfinClient, _is_retryable_http_error
+from topsongs.jellyfin import JellyfinClient
 
 
 class JellyfinClientTests(unittest.TestCase):
@@ -12,18 +10,32 @@ class JellyfinClientTests(unittest.TestCase):
         self.assertEqual(client.default_headers["Authorization"], 'MediaBrowser Token="token"')
         self.assertNotIn("X-Emby-Token", client.default_headers)
 
-    def test_create_playlist_uses_target_user_and_returns_created_id(self) -> None:
+    def test_create_playlist_sends_the_dto_and_returns_created_id(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
         calls = []
-        client._post = lambda path, params: calls.append((path, params)) or {"Id": "playlist-123"}  # type: ignore[method-assign]
+
+        def post_json(path, body):
+            calls.append((path, body))
+            return {"Id": "playlist-123"}
+
+        client._post_json = post_json  # type: ignore[method-assign]
 
         playlist_id = client.create_playlist("user-123", "Top Songs - Artist", ["a", "b"])
+        client.create_playlist("user-123", "Live - Artist", ["a"], public=True)
 
         self.assertEqual(playlist_id, "playlist-123")
         self.assertEqual(calls[0][0], "/Playlists")
-        self.assertEqual(calls[0][1]["UserId"], "user-123")
-        self.assertEqual(calls[0][1]["Name"], "Top Songs - Artist")
-        self.assertEqual(calls[0][1]["Ids"], "a,b")
+        self.assertEqual(
+            calls[0][1],
+            {
+                "Name": "Top Songs - Artist",
+                "Ids": ["a", "b"],
+                "UserId": "user-123",
+                "MediaType": "Audio",
+                "IsPublic": False,
+            },
+        )
+        self.assertTrue(calls[1][1]["IsPublic"])
 
     def test_get_users_maps_policy(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
@@ -222,9 +234,6 @@ class JellyfinClientTests(unittest.TestCase):
             self.assertFalse(client._client.is_closed)
 
         self.assertTrue(client._client.is_closed)
-
-    def test_remote_protocol_error_is_retryable(self) -> None:
-        self.assertTrue(_is_retryable_http_error(httpx.RemoteProtocolError("peer closed")))
 
 
 if __name__ == "__main__":

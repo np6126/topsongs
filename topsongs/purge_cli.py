@@ -1,10 +1,11 @@
-"""topsongs-purge — delete all topsongs-created playlists for every user.
+"""topsongs-purge — delete all playlists of the nightly run for every user.
 
-Deletes every playlist whose name starts with the configured PLAYLIST_NAME_PREFIX
-(or the prefix given via --prefix), across ALL Jellyfin users. Refuses an empty
-prefix (that would match every playlist). Use --dry-run to preview; deletion asks
-for confirmation unless --yes. See topsongs-prune for an allowlist-based
-"delete everything except these" cleanup.
+Deletes the playlists the nightly run owns, tagged PLAYLIST_MANAGED_TAG, or
+with --prefix every playlist whose name starts with it, across ALL Jellyfin
+users. Live playlists are never deleted. Refuses an empty prefix (that would
+match every playlist).
+Use --dry-run to preview; deletion asks for confirmation unless --yes. See
+topsongs-prune for an allowlist-based "delete everything except these" cleanup.
 
     topsongs-purge --dry-run
     topsongs-purge --prefix "Top Songs - " --yes
@@ -14,14 +15,19 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from rich.console import Console
+from rich.markup import escape
 
+from . import i18n
 from .config import Settings
+from .i18n import t
 from .jellyfin import JellyfinClient
 from .logging_setup import configure_logging
-from .models import JellyfinUser
+from .models import JellyfinPlaylist, JellyfinUser
+from .ownership import is_live, is_nightly
 from .sanitize import sanitize_untrusted_text
 
 logger = logging.getLogger(__name__)
@@ -42,36 +48,51 @@ class _ManagedPlaylist:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topsongs-purge",
-        description=(
-            "Löscht alle von topsongs erstellten Playlists (erkannt am "
-            "PLAYLIST_NAME_PREFIX) für ALLE Jellyfin-Benutzer."
+        description=t(
+            "Deletes the nightly run's playlists (recognized by the PLAYLIST_MANAGED_TAG "
+            "tag) for ALL Jellyfin users. Never live playlists."
         ),
     )
     parser.add_argument(
         "--prefix",
         default=None,
-        help=(
-            "Namens-Prefix der zu löschenden Playlists. "
-            "Standard: PLAYLIST_NAME_PREFIX aus der Konfiguration."
-        ),
+        help=t("Instead, delete every playlist whose name starts with this (except live ones)."),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Nur anzeigen, was gelöscht würde, ohne etwas zu verändern.",
+        help=t("Only show what would be deleted, without changing anything."),
     )
     parser.add_argument(
         "--yes",
         action="store_true",
-        help="Ohne interaktive Rückfrage löschen.",
+        help=t("Delete without asking."),
     )
     return parser
+
+
+def _selection(
+    settings: Settings, prefix: str | None
+) -> tuple[str, Callable[[JellyfinPlaylist], bool]]:
+    """What purge deletes, as (description, test): the nightly run's playlists,
+    or with a prefix every name that starts with it. Live playlists never."""
+    if prefix is None:
+        return (
+            t("tag '{tag}'", tag=settings.playlist_managed_tag),
+            lambda playlist: is_nightly(playlist, settings),
+        )
+    if not prefix:
+        raise ValueError(t("The prefix is empty — a purge would delete ALL playlists."))
+    return (
+        t("prefix '{prefix}'", prefix=prefix),
+        lambda playlist: playlist.name.startswith(prefix) and not is_live(playlist),
+    )
 
 
 def _collect_managed_playlists(
     jellyfin: JellyfinClient,
     users: list[JellyfinUser],
-    prefix: str,
+    selects: Callable[[JellyfinPlaylist], bool],
     console: Console,
 ) -> list[_ManagedPlaylist]:
     found: dict[str, _ManagedPlaylist] = {}
@@ -80,7 +101,9 @@ def _collect_managed_playlists(
             playlists = jellyfin.get_playlists_for_user(user.id)
         except Exception as exc:  # noqa: BLE001 - skip one user, keep purging the rest
             console.print(
-                f"[yellow]Playlists für '{user.name}' nicht ladbar, übersprungen:[/] {exc}"
+                "[yellow]"
+                + t("Could not load the playlists of {user}, skipped:", user=escape(user.name))
+                + f"[/] {escape(str(exc))}"
             )
             logger.warning(
                 "event=purge_user_skipped user=%s error=%s",
@@ -89,7 +112,7 @@ def _collect_managed_playlists(
             )
             continue
         for playlist in playlists:
-            if not playlist.name.startswith(prefix):
+            if not selects(playlist):
                 continue
             entry = found.get(playlist.id)
             if entry is None:
@@ -105,10 +128,10 @@ def _collect_managed_playlists(
 
 def _confirm(console: Console, count: int) -> bool:
     console.print(
-        f"\n[bold red]{count} Playlists werden unwiderruflich gelöscht.[/]"
+        f"\n[bold red]{t('{count} playlists will be deleted irrevocably.', count=count)}[/]"
     )
     try:
-        answer = input("Zum Bestätigen 'ja' eingeben: ").strip().lower()
+        answer = input(t("Type 'yes' to confirm: ")).strip().lower()
     except EOFError:
         return False
     return answer in {"ja", "j", "yes", "y"}
@@ -132,7 +155,10 @@ def _delete_all(
             )
         except Exception as exc:  # noqa: BLE001 - report and continue with the rest
             failed += 1
-            console.print(f"[red]Fehler beim Löschen von '{playlist.name}':[/] {exc}")
+            console.print(
+                f"[red]{t('Could not delete {name}:', name=escape(playlist.name))}[/] "
+                f"{escape(str(exc))}"
+            )
             logger.exception(
                 "event=purge_delete_failed playlist=%s playlist_id=%s error=%s",
                 sanitize_untrusted_text(playlist.name),
@@ -143,18 +169,17 @@ def _delete_all(
 
 
 def main(argv: list[str] | None = None) -> int:
+    i18n.use_configured_language()
     args = _build_parser().parse_args(argv)
     settings = Settings()
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(settings.log_level)
     console = Console()
 
-    prefix = args.prefix if args.prefix is not None else settings.playlist_name_prefix
-    if not prefix:
-        console.print(
-            "[red]Prefix ist leer — ein Purge würde ALLE Playlists löschen. "
-            "Abbruch.[/]"
-        )
+    try:
+        selection = _selection(settings, args.prefix)
+    except ValueError as exc:
+        console.print(f"[red]{exc} {t('Aborted.')}[/]")
         return 1
 
     with JellyfinClient(
@@ -164,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         max_retries=settings.request_max_retries,
         retry_backoff_seconds=settings.retry_backoff_seconds,
     ) as jellyfin:
-        return _purge(args, settings, console, jellyfin, prefix)
+        return _purge(args, settings, console, jellyfin, selection)
 
 
 def _purge(
@@ -172,41 +197,53 @@ def _purge(
     settings: Settings,
     console: Console,
     jellyfin: JellyfinClient,
-    prefix: str,
+    selection: tuple[str, Callable[[JellyfinPlaylist], bool]],
 ) -> int:
     try:
         users = jellyfin.get_users()
     except Exception as exc:  # noqa: BLE001 - surface a clean message, not a traceback
-        console.print(f"[red]Jellyfin nicht erreichbar:[/] {exc}")
+        console.print(f"[red]{t('Jellyfin is not reachable:')}[/] {escape(str(exc))}")
         return 1
 
-    playlists = _collect_managed_playlists(jellyfin, users, prefix, console)
+    described, selects = selection
+    playlists = _collect_managed_playlists(jellyfin, users, selects, console)
     if not playlists:
-        console.print(f"[green]Keine Playlists mit Präfix '{prefix}' gefunden.[/]")
+        console.print(
+            f"[green]{t('No playlists with {selection} found.', selection=escape(described))}[/]"
+        )
         return 0
 
     console.print(
-        f"[dim]Gefunden: {len(playlists)} Playlists mit Präfix '{prefix}' "
-        f"über {len(users)} Benutzer.[/]"
+        "[dim]"
+        + t(
+            "Found {count} playlists with {selection} across {users} users.",
+            count=len(playlists),
+            selection=escape(described),
+            users=len(users),
+        )
+        + "[/]"
     )
     for playlist in playlists:
         console.print(
-            f"  • {playlist.name}  [dim]({', '.join(playlist.user_names)})[/]"
+            f"  • {escape(playlist.name)}  [dim]({escape(', '.join(playlist.user_names))})[/]"
         )
 
     if args.dry_run or settings.dry_run:
         console.print(
-            f"\n[yellow]Dry-Run:[/] {len(playlists)} Playlists würden gelöscht. "
-            "Nichts wurde verändert."
+            f"\n[yellow]{t('Dry run:')}[/] "
+            + t("{count} playlists would be deleted. Nothing was changed.", count=len(playlists))
         )
         return 0
 
     if not args.yes and not _confirm(console, len(playlists)):
-        console.print("[yellow]Abgebrochen. Nichts wurde gelöscht.[/]")
+        console.print(f"[yellow]{t('Cancelled. Nothing was deleted.')}[/]")
         return 0
 
     deleted, failed = _delete_all(jellyfin, playlists, console)
-    console.print(f"\n[green]{deleted} gelöscht[/], [red]{failed} fehlgeschlagen[/].")
+    console.print(
+        f"\n[green]{t('{count} deleted', count=deleted)}[/], "
+        f"[red]{t('{count} failed', count=failed)}[/]."
+    )
     return 1 if failed else 0
 
 

@@ -4,6 +4,64 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-22
+
+### Added
+- Live playlists for concert prep: `topsongs-live` and the dashboard's Live
+  view turn setlist.fm setlists into a Jellyfin playlist from the library —
+  one concert in its running order, or a mix of up to 20 concerts with the
+  most-played songs first. Concerts can be the newest, picked by number or
+  setlist.fm link, one per venue, or found by tour, year, venue, city and
+  country; the dashboard autocompletes those filters and the artist. Songs
+  played at fewer than `--min-share` of the concerts (default 50 %) are left
+  out. Made on request only; nothing replaces or deletes a playlist. Needs
+  `SETLISTFM_API_KEY`; `LIVE_PLAYLIST_PREFIX` (default `Live - `) shapes the
+  names.
+- Live playlists carry the Jellyfin tag `topsongs-live`; runs, purge and prune
+  never touch them, and prune lists them as protected.
+- Live playlists for several users at once: `topsongs-live --user a,b` or
+  `--all-users`, and user chips in the dashboard, which remember the last
+  choice in the browser. Each user gets a copy matched against their own
+  library. `--public`, or the dashboard's public switch, makes one playlist
+  that every user sees instead.
+- `TOPSONGS_LANGUAGE` (`en` or `de`): the language of all command-line output
+  and `--help`, the dashboard, and the description of new live playlists.
+  Logs and `last_run.txt` stay English.
+
+### Changed
+- **Breaking:** the command-line tools and the dashboard speak English by
+  default. Set `TOPSONGS_LANGUAGE=de` to keep the German texts.
+- The dashboard's artist autocomplete suggests names that start with the
+  typed text, ignoring case and accents, instead of every name containing it.
+- Playlists are created with a JSON body instead of the query parameters
+  newer Jellyfin versions deprecate.
+- **Breaking:** the tag alone marks the playlists of the nightly run. Every
+  run tags what it creates with `PLAYLIST_MANAGED_TAG` and recognizes its
+  playlists by it, never by name. `PLAYLIST_NAME_PREFIX` only shapes the names
+  and now defaults to none, so names are bare (`Powerwolf`). Upgrading:
+  - from the old default prefix mode: a user without tagged playlists gets
+    their untagged `Top Songs - …` playlists (or those with the configured
+    prefix) tagged once on the next run. With the prefix unset they are then
+    replaced by bare-named ones; set `PLAYLIST_NAME_PREFIX="Top Songs - "` to
+    keep the old names.
+  - from tag mode: remove `PLAYLIST_NAME_PREFIX` if it is set, or the names
+    gain that prefix; `PLAYLIST_TAG_MANAGED` can go.
+- `topsongs-purge` and the dashboard's Purge delete the playlists with
+  `PLAYLIST_MANAGED_TAG` unless a prefix is given; live playlists never.
+- Jellyfin and Last.fm requests honour a server's `Retry-After` on retryable
+  errors (up to 10 s), as the setlist.fm requests do.
+- The dashboard's mode card shows the tag and the name prefix.
+
+### Removed
+- `PLAYLIST_TAG_MANAGED`; a leftover setting is ignored.
+
+### Fixed
+- The dashboard's artist autocomplete never learned of artists added after
+  its first use: its cache did not expire. It now refreshes after an hour and
+  keeps the old list while Jellyfin is unreachable.
+- In tag mode, `topsongs-purge` found none of the nightly playlists: it looked
+  for the name prefix, which tag mode leaves out of the names.
+
 ## [0.2.6] - 2026-10-21
 
 ### Fixed
@@ -122,6 +180,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   also runnable as a plain Python CLI.
 - Allow/deny filters for artists, users, and library paths.
 
+[0.3.0]: https://github.com/np6126/topsongs/releases/tag/v0.3.0
 [0.2.6]: https://github.com/np6126/topsongs/releases/tag/v0.2.6
 [0.2.5]: https://github.com/np6126/topsongs/releases/tag/v0.2.5
 [0.2.4]: https://github.com/np6126/topsongs/releases/tag/v0.2.4

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -20,9 +20,9 @@
   <div id="token-gate" class="gate hidden">
     <div class="gate-card glass">
       <div class="logo logo-lg"><span class="eq"><i></i><i></i><i></i><i></i></span> topsongs</div>
-      <p class="muted">Diese Instanz ist mit einem Token geschützt.</p>
-      <input id="token-input" type="password" placeholder="Access-Token" autocomplete="off">
-      <button id="token-submit" class="btn btn-primary">Entsperren</button>
+      <p class="muted" data-i18n>This instance is protected by a token.</p>
+      <input id="token-input" type="password" placeholder="Access token" autocomplete="off">
+      <button id="token-submit" class="btn btn-primary" data-i18n>Unlock</button>
     </div>
   </div>
 
@@ -46,6 +46,10 @@
           <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
           <span>Missing</span>
         </button>
+        <button class="nav-item hidden" data-view="live" id="nav-live">
+          <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 003-3V5a3 3 0 10-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg>
+          <span>Live</span>
+        </button>
         <button class="nav-item" data-view="purge">
           <svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
           <span>Purge</span>
@@ -61,7 +65,7 @@
       </nav>
       <div class="sidebar-foot">
         <div id="jelly-dot" class="health"><span class="dot"></span><span id="jelly-text">Jellyfin …</span></div>
-        <div class="version">v0.2.6</div>
+        <div class="version">v0.3.0</div>
       </div>
     </aside>
 
@@ -72,8 +76,8 @@
         <header class="view-head">
           <h1>Dashboard</h1>
           <div class="head-actions">
-            <button class="btn ghost" id="refresh-status"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A8 8 0 1019.74 14h-2.08A6 6 0 1112 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> Aktualisieren</button>
-            <button class="btn btn-primary glow" id="dash-run"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Run jetzt</button>
+            <button class="btn ghost" id="refresh-status"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A8 8 0 1019.74 14h-2.08A6 6 0 1112 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> <span data-i18n>Refresh</span></button>
+            <button class="btn btn-primary glow" id="dash-run"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> <span data-i18n>Run now</span></button>
           </div>
         </header>
 
@@ -81,7 +85,7 @@
 
         <div class="hero glass">
           <div class="hero-main">
-            <div class="hero-label">Letzter Run</div>
+            <div class="hero-label" data-i18n>Last run</div>
             <div class="hero-time" id="hero-time">—</div>
             <div class="hero-sub" id="hero-rel"></div>
           </div>
@@ -92,17 +96,17 @@
 
         <div class="dash-row">
           <div class="glass card">
-            <div class="card-title">Nächster geplanter Run</div>
+            <div class="card-title" data-i18n>Next scheduled run</div>
             <div class="big" id="next-run">—</div>
             <div class="muted" id="cron-line"></div>
           </div>
           <div class="glass card">
-            <div class="card-title">Run-Lock</div>
+            <div class="card-title" data-i18n>Run lock</div>
             <div class="big" id="lock-state">—</div>
             <div class="muted" id="lock-line"></div>
           </div>
           <div class="glass card">
-            <div class="card-title">Modus</div>
+            <div class="card-title">Playlists</div>
             <div class="big" id="mode-state">—</div>
             <div class="muted" id="mode-line"></div>
           </div>
@@ -112,47 +116,72 @@
       <!-- RUN -->
       <section class="view" id="view-run">
         <header class="view-head">
-          <h1>Playlist-Run</h1>
+          <h1 data-i18n>Playlist run</h1>
           <div class="head-actions">
-            <label class="toggle"><input type="checkbox" id="run-dry"><span class="slider"></span><span>Dry-Run</span></label>
-            <button class="btn btn-primary glow" id="run-start"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Run starten</button>
+            <label class="toggle"><input type="checkbox" id="run-dry"><span class="slider"></span><span data-i18n>Dry run</span></label>
+            <button class="btn btn-primary glow" id="run-start"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> <span data-i18n>Start run</span></button>
           </div>
         </header>
-        <p class="muted">Baut für jeden Benutzer die <code>Top Songs</code>-Playlists neu — exakt der Job, den der Cron nachts ausführt. Logs streamen live.</p>
+        <p class="muted" data-i18n>Rebuilds every user's playlists from the Last.fm top tracks — exactly the job the cron runs at night. Logs stream live.</p>
         <div class="terminal glass">
           <div class="term-head">
             <span class="eq"><i></i><i></i><i></i><i></i></span>
-            <span class="term-title" id="run-state-label">bereit</span>
+            <span class="term-title" id="run-state-label" data-i18n>ready</span>
             <span class="spinner hidden" id="run-spinner"></span>
           </div>
-          <pre class="term-body" id="run-log"><span class="muted">Noch kein Run gestartet. Drück „Run starten“.</span></pre>
+          <pre class="term-body" id="run-log"><span class="muted" data-i18n>No run started yet. Press “Start run”.</span></pre>
         </div>
         <div id="run-summary" class="summary-grid hidden"></div>
       </section>
 
       <!-- MISSING -->
       <section class="view" id="view-missing">
-        <header class="view-head"><h1>Fehlende Songs</h1></header>
-        <p class="muted">Vergleicht deine Bibliothek mit der Last.fm-Diskografie eines Künstlers und zeigt die Lücke.</p>
+        <header class="view-head"><h1 data-i18n>Missing songs</h1></header>
+        <p class="muted" data-i18n>Compares your library with an artist's Last.fm discography and shows the gap.</p>
         <div class="form-row glass">
-          <input id="miss-artist" class="search grow" placeholder="Künstler (leer = alle)" list="artist-options" autocomplete="off">
+          <input id="miss-artist" class="search grow" placeholder="Artist (empty = all)" list="artist-options" autocomplete="off">
           <datalist id="artist-options"></datalist>
-          <input id="miss-user" class="search" placeholder="Benutzer (optional)">
+          <input id="miss-user" class="search" placeholder="User (optional)">
           <label class="toggle"><input type="checkbox" id="miss-alltypes"><span class="slider"></span><span>All&nbsp;types</span></label>
           <label class="toggle"><input type="checkbox" id="miss-nocache"><span class="slider"></span><span>No&nbsp;cache</span></label>
-          <button class="btn btn-primary" id="miss-go"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg> Prüfen</button>
+          <button class="btn btn-primary" id="miss-go"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg> <span data-i18n>Check</span></button>
         </div>
         <div id="miss-body"></div>
+      </section>
+
+      <!-- LIVE -->
+      <section class="view" id="view-live">
+        <header class="view-head"><h1 data-i18n>Live playlists</h1></header>
+        <p class="muted" data-i18n>For concert prep: one concert or a mix of the last concerts from setlist.fm as a playlist. In a mix the most played songs come first. Only creates, never deletes.</p>
+        <div id="live-off" class="alert warn hidden" data-i18n>Live playlists are off: <code>SETLISTFM_API_KEY</code> is not set.</div>
+        <div class="form-row glass live-form">
+          <div class="live-form-row">
+            <input id="live-artist" class="search grow" placeholder="Artist from your library" list="artist-options" autocomplete="off">
+            <button class="btn btn-primary" id="live-load"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg> <span data-i18n>Load concerts</span></button>
+          </div>
+          <div class="live-form-row" id="live-filters">
+            <input id="live-tour" class="search grow" placeholder="Tour" list="live-tours" autocomplete="off">
+            <input id="live-year" class="search small" placeholder="Year" list="live-years" inputmode="numeric" autocomplete="off">
+            <input id="live-venue" class="search grow" placeholder="Venue" list="live-venues" autocomplete="off">
+            <input id="live-city" class="search" placeholder="City" list="live-cities" autocomplete="off">
+            <input id="live-country" class="search small" placeholder="Country (DE)" list="live-countries" autocomplete="off">
+            <button class="btn ghost" id="live-clear" title="Clear filters">✕</button>
+            <datalist id="live-tours"></datalist><datalist id="live-years"></datalist><datalist id="live-venues"></datalist>
+            <datalist id="live-cities"></datalist><datalist id="live-countries"></datalist>
+          </div>
+        </div>
+        <div id="live-body"></div>
+        <div id="live-existing"></div>
       </section>
 
       <!-- PURGE -->
       <section class="view" id="view-purge">
         <header class="view-head"><h1>Purge</h1></header>
-        <p class="muted">Löscht <b>alle</b> Playlists mit einem Namens-Prefix — über alle Benutzer. Erst Vorschau, dann bewusst ausführen.</p>
+        <p class="muted" data-i18n>Deletes <b>all</b> playlists of the nightly run, or all with a name prefix — across all users. Never live playlists. Preview first, then run it deliberately.</p>
         <div class="form-row glass">
-          <input id="purge-prefix" class="search grow" placeholder="Prefix (leer = Standard aus Config)">
-          <button class="btn ghost" id="purge-preview"><svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 110-10 5 5 0 010 10zm0-8a3 3 0 100 6 3 3 0 000-6z"/></svg> Vorschau</button>
-          <button class="btn btn-danger" id="purge-exec" disabled><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg> Löschen</button>
+          <input id="purge-prefix" class="search grow" placeholder="Prefix (empty = playlists of the nightly run)">
+          <button class="btn ghost" id="purge-preview"><svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 110-10 5 5 0 010 10zm0-8a3 3 0 100 6 3 3 0 000-6z"/></svg> <span data-i18n>Preview</span></button>
+          <button class="btn btn-danger" id="purge-exec" disabled><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg> <span data-i18n>Delete</span></button>
         </div>
         <div id="purge-body"></div>
       </section>
@@ -160,12 +189,12 @@
       <!-- PRUNE -->
       <section class="view" id="view-prune">
         <header class="view-head"><h1>Prune</h1></header>
-        <p class="muted">Behält nur die genannten Playlists und löscht <b>alle anderen</b>. Behaltene können mit einem Prefix umbenannt werden.</p>
+        <p class="muted" data-i18n>Keeps only the named playlists and deletes <b>all others</b>. Kept ones can be renamed with a prefix.</p>
         <div class="form-row glass">
-          <input id="prune-keep" class="search grow" placeholder="Behalten: Playlist-Namen, komma-getrennt">
-          <input id="prune-rename" class="search small" placeholder="Rename-Prefix (z.B. _)">
-          <button class="btn ghost" id="prune-preview"><svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 110-10 5 5 0 010 10zm0-8a3 3 0 100 6 3 3 0 000-6z"/></svg> Vorschau</button>
-          <button class="btn btn-danger" id="prune-exec" disabled><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg> Ausführen</button>
+          <input id="prune-keep" class="search grow" placeholder="Keep: playlist names, comma-separated">
+          <input id="prune-rename" class="search small" placeholder="Rename prefix (e.g. _)">
+          <button class="btn ghost" id="prune-preview"><svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 110-10 5 5 0 010 10zm0-8a3 3 0 100 6 3 3 0 000-6z"/></svg> <span data-i18n>Preview</span></button>
+          <button class="btn btn-danger" id="prune-exec" disabled><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg> <span data-i18n>Run</span></button>
         </div>
         <div id="prune-body"></div>
       </section>
@@ -173,10 +202,10 @@
       <!-- CONFIG -->
       <section class="view" id="view-config">
         <header class="view-head">
-          <h1>Konfiguration</h1>
-          <button class="btn ghost" id="config-reload"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A8 8 0 1019.74 14h-2.08A6 6 0 1112 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> Laden</button>
+          <h1 data-i18n>Configuration</h1>
+          <button class="btn ghost" id="config-reload"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A8 8 0 1019.74 14h-2.08A6 6 0 1112 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> <span data-i18n>Load</span></button>
         </header>
-        <p class="muted">Effektive Einstellungen des laufenden Containers. Secrets sind verborgen. Im Prod-Deploy werden sie über die Container-Umgebung gesetzt.</p>
+        <p class="muted" data-i18n>Effective settings of the running container. Secrets are hidden. In the prod deploy they are set through the container environment.</p>
         <div id="config-body" class="config-table glass"></div>
       </section>
     </main>
@@ -185,11 +214,11 @@
   <!-- confirm modal -->
   <div id="modal" class="modal-back hidden">
     <div class="modal glass">
-      <h3 id="modal-title">Sicher?</h3>
+      <h3 id="modal-title">Sure?</h3>
       <p id="modal-text" class="muted"></p>
       <div class="modal-actions">
-        <button class="btn ghost" id="modal-cancel">Abbrechen</button>
-        <button class="btn btn-danger" id="modal-ok">Bestätigen</button>
+        <button class="btn ghost" id="modal-cancel" data-i18n>Cancel</button>
+        <button class="btn btn-danger" id="modal-ok" data-i18n>Confirm</button>
       </div>
     </div>
   </div>

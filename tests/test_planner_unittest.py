@@ -25,7 +25,6 @@ class SettingsStub:
     min_tracks_per_artist = 10
     min_track_duration_seconds = 60
     playlist_name_prefix = "Top Songs - "
-    playlist_tag_managed = False
     playlist_managed_tag = "topsongs"
     append_unmatched_songs = True
     personalization_weight = 0.0
@@ -34,9 +33,16 @@ class SettingsStub:
     run_concurrency = 1
 
 
-class TagManagedSettings(SettingsStub):
-    # Identify managed playlists by tag, not name prefix, so names are bare.
-    playlist_tag_managed = True
+class BareNameSettings(SettingsStub):
+    # No name prefix: the playlists are named after the artist alone.
+    playlist_name_prefix = ""
+
+
+class TaggingStub:
+    """Base for the Jellyfin stubs: accepts the tag every created playlist gets."""
+
+    def add_managed_tag(self, user_id, playlist_id, tag):
+        pass
 
 
 class LibraryPathFilterTests(unittest.TestCase):
@@ -127,7 +133,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         provider.get_top_tracks.assert_called_once_with("Powerwolf")
 
     def test_artist_failure_is_isolated(self) -> None:
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_artists(self, user_id):
                 return [JellyfinArtist(id="a1", name="Broken Artist")]
 
@@ -162,7 +168,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         self.assertEqual(planner._playlist_name("AC/DC"), "Top Songs - AC_DC")
 
     def test_deletes_orphan_managed_playlists_after_planning(self) -> None:
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted_ids = []
 
@@ -209,7 +215,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         class PrefixedSettings(SettingsStub):
             playlist_name_prefix = "Best Of - "
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted_ids = []
 
@@ -240,7 +246,7 @@ class LibraryPathFilterTests(unittest.TestCase):
     def test_tag_mode_uses_bare_name_and_tags_created_playlist(self) -> None:
         """Tag mode: the playlist name has no prefix and the create is tagged."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.tagged: list[tuple[str, str, str]] = []
 
@@ -260,7 +266,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         provider.name = "lastfm"
         provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
         jellyfin = JellyfinStub()
-        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        planner = Planner(BareNameSettings(), jellyfin=jellyfin, provider=provider)
         user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
         artist = JellyfinArtist(id="a1", name="Powerwolf")
 
@@ -272,7 +278,7 @@ class LibraryPathFilterTests(unittest.TestCase):
     def test_tag_mode_orphan_deletes_tagged_but_leaves_untagged_same_name(self) -> None:
         """Tag mode: a tagged orphan is deleted; an untagged same-name user playlist is not."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted: list[str] = []
 
@@ -291,7 +297,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         provider = MagicMock()
         provider.name = "lastfm"
         jellyfin = JellyfinStub()
-        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        planner = Planner(BareNameSettings(), jellyfin=jellyfin, provider=provider)
         user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
 
         user_plan = planner._plan_for_user(user)
@@ -302,7 +308,7 @@ class LibraryPathFilterTests(unittest.TestCase):
     def test_tag_mode_replace_matches_only_tagged_playlist(self) -> None:
         """Tag mode: a re-run replaces the tagged playlist and leaves the untagged twin."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted: list[str] = []
                 self.tagged: list[tuple[str, str, str]] = []
@@ -335,7 +341,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         provider.name = "lastfm"
         provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
         jellyfin = JellyfinStub()
-        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        planner = Planner(BareNameSettings(), jellyfin=jellyfin, provider=provider)
         user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
 
         user_plan = planner._plan_for_user(user)
@@ -352,7 +358,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         """Tag mode: a failed tag deletes the just-created playlist so no untagged
         orphan leaks, and the artist is reported as failed."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted: list[str] = []
 
@@ -381,7 +387,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         provider.name = "lastfm"
         provider.get_top_tracks.return_value = [ProviderTrack(title="song1", rank=1)]
         jellyfin = JellyfinStub()
-        planner = Planner(TagManagedSettings(), jellyfin=jellyfin, provider=provider)
+        planner = Planner(BareNameSettings(), jellyfin=jellyfin, provider=provider)
         user = JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy())
 
         user_plan = planner._plan_for_user(user)
@@ -393,7 +399,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         self.assertEqual(user_plan.artists[0].error, "tag write failed")
 
     def test_existing_playlist_is_deleted_when_artist_is_no_longer_eligible(self) -> None:
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted_ids = []
 
@@ -429,7 +435,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         self.assertEqual(jellyfin.deleted_ids, ["p1"])
 
     def test_artist_plan_reports_local_tracks_not_present_in_provider_list(self) -> None:
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(
@@ -469,7 +475,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         class SettingsWithoutAppend(SettingsStub):
             append_unmatched_songs = False
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(
@@ -503,7 +509,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         )
 
     def test_short_tracks_are_excluded_from_playlist_and_eligibility(self) -> None:
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(
@@ -549,7 +555,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         )
 
     def test_orphan_delete_failure_is_isolated(self) -> None:
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_artists(self, user_id):
                 return []
 
@@ -576,7 +582,7 @@ class LibraryPathFilterTests(unittest.TestCase):
     def test_failed_artist_preserves_existing_playlist_from_orphan_deletion(self) -> None:
         """Fix 1: playlist must not be orphan-deleted when the artist's processing fails."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted_ids: list[str] = []
 
@@ -607,7 +613,7 @@ class LibraryPathFilterTests(unittest.TestCase):
     def test_playlist_name_collision_skips_second_artist(self) -> None:
         """Fix 6: artists that sanitize to the same playlist name must not clobber each other."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.created: list[str] = []
 
@@ -653,7 +659,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         class DryRunSettings(SettingsStub):
             dry_run = True
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.created: list[str] = []
                 self.deleted: list[str] = []
@@ -697,7 +703,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         class DryRunSettings(SettingsStub):
             dry_run = True
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted: list[str] = []
 
@@ -724,7 +730,7 @@ class LibraryPathFilterTests(unittest.TestCase):
     def test_unmatched_block_dedups_only_identical_titles(self) -> None:
         """Identical-title copies collapse; distinct editions are kept."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(id="1", name="Wishmaster", path="/music/1.flac"),
@@ -768,7 +774,7 @@ class LibraryPathFilterTests(unittest.TestCase):
     def test_distinct_editions_kept_only_identical_titles_are_duplicates(self) -> None:
         """Report: editions become gaps; only identical titles are duplicates."""
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(id="1", name="Wishmaster", path="/music/1.flac"),
@@ -814,7 +820,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         class PersonalizedSettings(SettingsStub):
             personalization_weight = 0.6
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_tracks_for_artist(self, user_id, artist):
                 return [
                     JellyfinTrack(id="low", name="Nemo", path="/music/low.flac",
@@ -849,7 +855,7 @@ class LibraryPathFilterTests(unittest.TestCase):
         class PersonalizedSettings(SettingsStub):
             personalization_weight = 0.6
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_artists(self, user_id):
                 return [JellyfinArtist(id="a1", name="Powerwolf")]
 
@@ -895,7 +901,7 @@ class ConcurrencyPlannerTests(unittest.TestCase):
             "ConcSettings", (SettingsStub,), {"run_concurrency": run_concurrency}
         )
 
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def get_artists(self, user_id):
                 return [
                     JellyfinArtist(id=f"a{index}", name=name)
@@ -1007,7 +1013,7 @@ class ConcurrencyPlannerTests(unittest.TestCase):
         self.assertIs(results[0], results[1])
 
     def test_collision_loser_existing_playlist_is_protected_from_orphan_deletion(self) -> None:
-        class JellyfinStub:
+        class JellyfinStub(TaggingStub):
             def __init__(self) -> None:
                 self.deleted: list[str] = []
 
@@ -1119,7 +1125,7 @@ class LibraryProvider:
         return [ProviderTrack(title=title, rank=rank) for rank, title in enumerate(titles, 1)]
 
 
-def _settings(base=TagManagedSettings, run_concurrency: int = 1):
+def _settings(base=BareNameSettings, run_concurrency: int = 1):
     return type("DuplicateSettings", (base,), {"run_concurrency": run_concurrency})()
 
 
@@ -1147,7 +1153,7 @@ class DuplicateArtistTests(unittest.TestCase):
         }
         winners = ["Blackmore's Night", "HAMMERFALL", "Mötley Crüe"]
         for base, prefix, tags in (
-            (TagManagedSettings, "", ["topsongs"]),
+            (BareNameSettings, "", ["topsongs"]),
             (SettingsStub, "Top Songs - ", []),
         ):
             with self.subTest(prefix=prefix):
@@ -1282,6 +1288,102 @@ class DuplicateArtistTests(unittest.TestCase):
             self.assertEqual(report.created_playlist_count, 0)
             self.assertEqual(report.replaced_playlist_count, 4)
             self.assertEqual(report.orphan_deleted_count, 0)
+
+
+class LivePlaylistSafetyTests(unittest.TestCase):
+    """The nightly run must never treat on-request live playlists as its own."""
+
+    def _run(self, settings) -> list[str]:
+        class JellyfinStub(TaggingStub):
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_artists(self, user_id):
+                return []
+
+            def get_playlists_for_user(self, user_id):
+                return [
+                    JellyfinPlaylist(id="old", name="Top Songs - Gone", tags=["topsongs"]),
+                    JellyfinPlaylist(id="gone", name="Gone", tags=["topsongs"]),
+                    JellyfinPlaylist(
+                        id="live",
+                        name="Live - Metallica - Mix aus 5 Konzerten",
+                        tags=["topsongs-live"],
+                    ),
+                    # A live playlist whose name looks like a nightly one.
+                    JellyfinPlaylist(
+                        id="live-2", name="Top Songs - Metallica live", tags=["topsongs-live"]
+                    ),
+                ]
+
+            def delete_playlist(self, playlist_id):
+                self.deleted.append(playlist_id)
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        jellyfin = JellyfinStub()
+        planner = Planner(settings, jellyfin=jellyfin, provider=provider)
+        planner._plan_for_user(JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy()))
+        return jellyfin.deleted
+
+    def test_keeps_live_playlists_whatever_their_name(self) -> None:
+        self.assertEqual(sorted(self._run(SettingsStub())), ["gone", "old"])
+
+
+class LegacyAdoptionTests(unittest.TestCase):
+    """Playlists of a topsongs from before tags are taken over once, by prefix."""
+
+    def _plan(self, settings, playlists) -> list[tuple[str, str]]:
+        tagged: list[tuple[str, str]] = []
+
+        class JellyfinStub:
+            def get_artists(self, user_id):
+                return []
+
+            def get_playlists_for_user(self, user_id):
+                return playlists
+
+            def add_managed_tag(self, user_id, playlist_id, tag):
+                tagged.append((playlist_id, tag))
+
+            def delete_playlist(self, playlist_id):
+                pass
+
+        provider = MagicMock()
+        provider.name = "lastfm"
+        planner = Planner(settings, jellyfin=JellyfinStub(), provider=provider)
+        planner._plan_for_user(JellyfinUser(id="u1", name="Alice", policy=JellyfinUserPolicy()))
+        return tagged
+
+    def test_untagged_prefixed_playlists_are_tagged_when_the_user_has_none(self) -> None:
+        playlists = [
+            JellyfinPlaylist(id="old", name="Top Songs - Metallica"),
+            JellyfinPlaylist(id="own", name="Mixtape"),
+            JellyfinPlaylist(id="live", name="Top Songs - live", tags=["topsongs-live"]),
+        ]
+
+        self.assertEqual(self._plan(SettingsStub(), playlists), [("old", "topsongs")])
+
+    def test_without_a_prefix_the_old_default_prefix_is_taken_over(self) -> None:
+        playlists = [JellyfinPlaylist(id="old", name="Top Songs - Metallica")]
+
+        self.assertEqual(self._plan(BareNameSettings(), playlists), [("old", "topsongs")])
+
+    def test_nothing_is_taken_over_once_the_user_has_tagged_playlists(self) -> None:
+        playlists = [
+            JellyfinPlaylist(id="new", name="Metallica", tags=["topsongs"]),
+            JellyfinPlaylist(id="own", name="Top Songs - selbst gemacht"),
+        ]
+
+        self.assertEqual(self._plan(BareNameSettings(), playlists), [])
+
+    def test_dry_run_writes_no_tag(self) -> None:
+        class DryRun(SettingsStub):
+            dry_run = True
+
+        playlists = [JellyfinPlaylist(id="old", name="Top Songs - Metallica")]
+
+        self.assertEqual(self._plan(DryRun(), playlists), [])
 
 
 if __name__ == "__main__":

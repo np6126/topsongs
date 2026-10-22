@@ -10,29 +10,42 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .. import i18n
+from ..i18n import t
+from ..live import LiveError
+from ..models import ConcertFilter
+from ..providers.setlistfm import SetlistFmError
 from .runner import RunActiveError, RunManager
 from .services import (
     ConfigError,
     artist_names,
     config_view,
     get_settings,
+    live_concerts,
+    live_create,
+    live_playlists,
+    live_preview,
     prune_execute,
     prune_preview,
     purge_execute,
     purge_preview,
     run_missing,
     status_payload,
+    user_names,
 )
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="topsongs", docs_url=None, redoc_url=None, openapi_url=None)
+# One language per process: what TOPSONGS_LANGUAGE says when the server starts.
+i18n.use_configured_language()
 
 
 def _state_dir() -> Path:
@@ -62,14 +75,14 @@ def require_token(
     elif token:
         provided = token
     if provided != expected:
-        raise HTTPException(status_code=401, detail="Ungültiges oder fehlendes Token.")
+        raise HTTPException(status_code=401, detail=t("Invalid or missing token."))
 
 
 def _wrap(func, *args):
-    """Call a service function, turning ConfigError into a clean 400."""
+    """Call a service function, turning user-fixable errors into a clean 400."""
     try:
         return func(*args)
-    except ConfigError as exc:
+    except (ConfigError, LiveError, SetlistFmError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -97,14 +110,34 @@ class PruneBody(BaseModel):
     rename_prefix: str = ""
 
 
+class LivePreviewBody(BaseModel):
+    artist: str
+    user: str | None = None
+    setlist_ids: list[str]
+    min_share: float = 0.5
+
+
+class LivePlaylistBody(BaseModel):
+    artist: str
+    # One copy per user; with public, only the first user's, visible to all.
+    users: list[str] = []
+    public: bool = False
+    setlist_ids: list[str]
+    min_share: float = 0.5
+    name: str
+
+
 # --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
 
 @app.get("/api/auth")
 def auth_info() -> dict:
-    """Public: tells the frontend whether a token is required (no secret leaked)."""
-    return {"token_required": bool(os.environ.get("TOPSONGS_WEB_TOKEN"))}
+    """Public: whether a token is required, and the language to show (no secret leaked)."""
+    return {
+        "token_required": bool(os.environ.get("TOPSONGS_WEB_TOKEN")),
+        "language": i18n.language(),
+    }
 
 
 @app.get("/api/status", dependencies=[Depends(require_token)])
@@ -181,6 +214,47 @@ async def api_prune_preview(body: PruneBody) -> dict:
 @app.post("/api/prune", dependencies=[Depends(require_token)])
 async def api_prune(body: PruneBody) -> dict:
     return await asyncio.to_thread(_wrap, prune_execute, body.keep, body.rename_prefix)
+
+
+@app.get("/api/users", dependencies=[Depends(require_token)])
+async def api_users() -> dict:
+    return await asyncio.to_thread(_wrap, user_names)
+
+
+@app.get("/api/live/concerts", dependencies=[Depends(require_token)])
+async def api_live_concerts(
+    artist: str,
+    concert_filter: Annotated[ConcertFilter, Depends()],
+    user: str | None = None,
+    mbid: str | None = None,
+) -> dict:
+    return await asyncio.to_thread(_wrap, live_concerts, artist, user, mbid, concert_filter)
+
+
+@app.post("/api/live/preview", dependencies=[Depends(require_token)])
+async def api_live_preview(body: LivePreviewBody) -> dict:
+    return await asyncio.to_thread(
+        _wrap, live_preview, body.artist, body.user, body.setlist_ids, body.min_share
+    )
+
+
+@app.post("/api/live/playlist", dependencies=[Depends(require_token)])
+async def api_live_playlist(body: LivePlaylistBody) -> dict:
+    return await asyncio.to_thread(
+        _wrap,
+        live_create,
+        body.artist,
+        body.users,
+        body.setlist_ids,
+        body.min_share,
+        body.name,
+        body.public,
+    )
+
+
+@app.get("/api/live/playlists", dependencies=[Depends(require_token)])
+async def api_live_playlists() -> dict:
+    return await asyncio.to_thread(_wrap, live_playlists)
 
 
 # --------------------------------------------------------------------------- #

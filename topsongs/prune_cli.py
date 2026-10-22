@@ -26,9 +26,13 @@ import sys
 from dataclasses import dataclass, field
 
 from rich.console import Console
+from rich.markup import escape
 
+from . import i18n
 from .config import Settings
+from .i18n import t
 from .jellyfin import JellyfinClient
+from .live import split_live
 from .logging_setup import configure_logging
 from .models import JellyfinUser
 from .sanitize import sanitize_untrusted_text
@@ -43,15 +47,15 @@ class _Playlist:
     id: str
     name: str
     user_names: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topsongs-prune",
-        description=(
-            "Behält nur die mit --keep genannten Playlists und löscht alle "
-            "anderen — über ALLE Jellyfin-Benutzer. Behaltene können mit "
-            "--rename-prefix umbenannt werden."
+        description=t(
+            "Keeps only the playlists named with --keep and deletes all others, across ALL "
+            "Jellyfin users. Kept ones can be renamed with --rename-prefix."
         ),
     )
     parser.add_argument(
@@ -59,26 +63,26 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="NAME",
-        help=(
-            "Name einer zu behaltenden Playlist. Mehrfach oder kommagetrennt "
-            "(z.B. --keep Alice --keep Bob oder --keep Alice,Bob). Pflicht."
+        help=t(
+            "Name of a playlist to keep. Repeat or separate with commas "
+            "(e.g. --keep Alice --keep Bob or --keep Alice,Bob). Required."
         ),
     )
     parser.add_argument(
         "--rename-prefix",
         default="",
         metavar="PREFIX",
-        help="Prefix, mit dem behaltene Playlists umbenannt werden (z.B. '_'). Standard: keiner.",
+        help=t("Prefix to rename kept playlists with (e.g. '_'). Default: none."),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Nur anzeigen, was passieren würde, ohne etwas zu verändern.",
+        help=t("Only show what would happen, without changing anything."),
     )
     parser.add_argument(
         "--yes",
         action="store_true",
-        help="Ohne interaktive Rückfrage ausführen.",
+        help=t("Run without asking."),
     )
     return parser
 
@@ -112,7 +116,9 @@ def _collect_playlists(
             playlists = jellyfin.get_playlists_for_user(user.id, media_types=None)
         except Exception as exc:  # noqa: BLE001 - skip one user, keep going
             console.print(
-                f"[yellow]Playlists für '{user.name}' nicht ladbar, übersprungen:[/] {exc}"
+                "[yellow]"
+                + t("Could not load the playlists of {user}, skipped:", user=escape(user.name))
+                + f"[/] {escape(str(exc))}"
             )
             logger.warning(
                 "event=prune_user_skipped user=%s error=%s",
@@ -124,7 +130,10 @@ def _collect_playlists(
             entry = found.get(playlist.id)
             if entry is None:
                 found[playlist.id] = _Playlist(
-                    id=playlist.id, name=playlist.name, user_names=[user.name]
+                    id=playlist.id,
+                    name=playlist.name,
+                    user_names=[user.name],
+                    tags=playlist.tags,
                 )
             else:
                 entry.user_names.append(user.name)
@@ -133,16 +142,19 @@ def _collect_playlists(
 
 def _confirm(console: Console, delete_count: int) -> bool:
     console.print(
-        f"\n[bold red]{delete_count} Playlists werden unwiderruflich gelöscht.[/]"
+        "\n[bold red]"
+        + t("{count} playlists will be deleted irrevocably.", count=delete_count)
+        + "[/]"
     )
     try:
-        answer = input("Zum Bestätigen 'ja' eingeben: ").strip().lower()
+        answer = input(t("Type 'yes' to confirm: ")).strip().lower()
     except EOFError:
         return False
     return answer in {"ja", "j", "yes", "y"}
 
 
 def main(argv: list[str] | None = None) -> int:
+    i18n.use_configured_language()
     args = _build_parser().parse_args(argv)
     keep = _parse_keep(args.keep)
     settings = Settings()
@@ -152,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not keep:
         console.print(
-            "[red]Kein --keep angegeben — das würde ALLE Playlists löschen. Abbruch.[/]"
+            f"[red]{t('No --keep given — that would delete ALL playlists.')} {t('Aborted.')}[/]"
         )
         return 1
 
@@ -177,50 +189,67 @@ def _prune(
     try:
         users = jellyfin.get_users()
     except Exception as exc:  # noqa: BLE001 - clean message, not a traceback
-        console.print(f"[red]Jellyfin nicht erreichbar:[/] {exc}")
+        console.print(f"[red]{t('Jellyfin is not reachable:')}[/] {escape(str(exc))}")
         return 1
 
-    playlists = _collect_playlists(jellyfin, users, console)
+    # Live playlists were made on request; prune never deletes or renames them.
+    live, playlists = split_live(_collect_playlists(jellyfin, users, console))
     keepers = [p for p in playlists if _base_name(p.name, prefix) in keep]
     to_delete = [p for p in playlists if _base_name(p.name, prefix) not in keep]
     to_rename = [p for p in keepers if p.name != prefix + _base_name(p.name, prefix)]
 
-    console.print(
-        f"[dim]{len(users)} Benutzer, {len(playlists)} Playlists (eindeutig nach id).[/]"
+    summary = t(
+        "{users} users, {count} playlists (unique by id).",
+        users=len(users),
+        count=len(playlists) + len(live),
     )
-    console.print(f"[bold]BEHALTEN ({len(keepers)}):[/]")
+    console.print(f"[dim]{summary}[/]")
+    console.print(f"[bold]{t('KEEP ({count}):', count=len(keepers))}[/]")
     for playlist in sorted(keepers, key=lambda p: p.name.lower()):
         target = prefix + _base_name(playlist.name, prefix)
         if playlist.name == target:
-            note = "  [dim](schon ok)[/]"
+            note = f"  [dim]({t('already fine')})[/]"
         elif prefix:
-            note = f"  ->  {target}"
+            note = f"  ->  {escape(target)}"
         else:
             note = ""
-        console.print(f"  • {playlist.name}{note}")
-    console.print(f"[bold]LÖSCHEN ({len(to_delete)}):[/]")
-    for playlist in sorted(to_delete, key=lambda p: p.name.lower()):
-        console.print(f"  • {playlist.name}  [dim]({', '.join(playlist.user_names)})[/]")
-
-    unmatched = keep - {_base_name(p.name, prefix) for p in keepers}
-    if unmatched:
+        console.print(f"  • {escape(playlist.name)}{note}")
+    if live:
         console.print(
-            f"[yellow]Hinweis: kein Treffer für --keep: {', '.join(sorted(unmatched))}[/]"
+            f"[bold]{t('PROTECTED ({count}):', count=len(live))}[/] "
+            f"[dim]{t('live playlists, always kept')}[/]"
         )
+        for playlist in sorted(live, key=lambda p: p.name.lower()):
+            console.print(f"  • {escape(playlist.name)}")
+    console.print(f"[bold]{t('DELETE ({count}):', count=len(to_delete))}[/]")
+    for playlist in sorted(to_delete, key=lambda p: p.name.lower()):
+        console.print(
+            f"  • {escape(playlist.name)}  [dim]({escape(', '.join(playlist.user_names))})[/]"
+        )
+
+    unmatched = keep - {_base_name(p.name, prefix) for p in keepers} - {p.name for p in live}
+    if unmatched:
+        names = escape(", ".join(sorted(unmatched)))
+        console.print(f"[yellow]{t('Note: no match for --keep: {names}', names=names)}[/]")
 
     if args.dry_run or settings.dry_run:
         console.print(
-            f"\n[yellow]Dry-Run:[/] {len(to_delete)} würden gelöscht, "
-            f"{len(to_rename)} umbenannt, {len(keepers)} behalten. Nichts verändert."
+            f"\n[yellow]{t('Dry run:')}[/] "
+            + t(
+                "{delete} would be deleted, {rename} renamed, {keep} kept. Nothing changed.",
+                delete=len(to_delete),
+                rename=len(to_rename),
+                keep=len(keepers),
+            )
         )
         return 0
 
     if not to_delete and not to_rename:
-        console.print("[green]Nichts zu tun.[/]")
+        console.print(f"[green]{t('Nothing to do.')}[/]")
         return 0
 
     if not args.yes and not _confirm(console, len(to_delete)):
-        console.print("[yellow]Abgebrochen. Nichts verändert.[/]")
+        console.print(f"[yellow]{t('Cancelled. Nothing changed.')}[/]")
         return 0
 
     # Rename before delete: keepers are never in the delete set, so a rename
@@ -229,10 +258,14 @@ def _prune(
     renamed, rename_failed = _rename_keepers(jellyfin, user_id, to_rename, prefix, console)
     deleted, delete_failed = _delete_playlists(jellyfin, to_delete, console)
 
+    changed = t("{renamed} renamed, {deleted} deleted", renamed=renamed, deleted=deleted)
+    errors = t(
+        "{rename} rename errors, {delete} delete errors",
+        rename=rename_failed,
+        delete=delete_failed,
+    )
     console.print(
-        f"\n[green]{renamed} umbenannt, {deleted} gelöscht[/], "
-        f"[red]{rename_failed} rename-Fehler, {delete_failed} delete-Fehler[/], "
-        f"{len(keepers)} behalten."
+        f"\n[green]{changed}[/], [red]{errors}[/], {t('{count} kept.', count=len(keepers))}"
     )
     return 1 if (rename_failed or delete_failed) else 0
 
@@ -259,7 +292,8 @@ def _rename_keepers(
         except Exception as exc:  # noqa: BLE001 - report and continue
             failed += 1
             console.print(
-                f"[red]Umbenennen fehlgeschlagen für '{playlist.name}':[/] {exc}"
+                f"[red]{t('Could not rename {name}:', name=escape(playlist.name))}[/] "
+                f"{escape(str(exc))}"
             )
             logger.exception(
                 "event=prune_rename_failed playlist=%s playlist_id=%s error=%s",
@@ -287,7 +321,10 @@ def _delete_playlists(
             )
         except Exception as exc:  # noqa: BLE001 - report and continue
             failed += 1
-            console.print(f"[red]Löschen fehlgeschlagen für '{playlist.name}':[/] {exc}")
+            console.print(
+                f"[red]{t('Could not delete {name}:', name=escape(playlist.name))}[/] "
+                f"{escape(str(exc))}"
+            )
             logger.exception(
                 "event=prune_delete_failed playlist=%s playlist_id=%s error=%s",
                 sanitize_untrusted_text(playlist.name),

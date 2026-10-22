@@ -1,11 +1,8 @@
 import unittest
 
-import httpx
-
 from topsongs.providers.lastfm import (
     LastFmError,
     LastFmProvider,
-    _is_retryable_http_error,
     _validate_raw_response_prefix,
 )
 
@@ -58,9 +55,6 @@ class LastFmProviderClientTests(unittest.TestCase):
             self.assertFalse(provider._client.is_closed)
 
         self.assertTrue(provider._client.is_closed)
-
-    def test_remote_protocol_error_is_retryable(self) -> None:
-        self.assertTrue(_is_retryable_http_error(httpx.RemoteProtocolError("peer closed")))
 
 
 if __name__ == "__main__":

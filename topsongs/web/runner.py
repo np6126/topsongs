@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..i18n import t
+
 # Numeric fields in last_run.txt; everything else is kept as a string.
 _INT_FIELDS = {
     "user_count_seen",
@@ -92,7 +94,7 @@ class RunManager:
     async def start(self, dry_run: bool) -> None:
         async with self._lock:
             if self.running:
-                raise RunActiveError("A playlist refresh is already running.")
+                raise RunActiveError(t("A playlist refresh is already running."))
             self._lines = []
             self.return_code = None
             self.finished_at = None

@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
-import time
 from typing import NamedTuple
 
 import httpx
 
+from ..http import REQUEST_ERRORS, Throttle, send_with_retries
 from ..models import Discography, DiscographyAlbum, ProviderTrack
 from ..normalize import normalize_name
 from ..sanitize import sanitize_untrusted_text
@@ -72,9 +71,7 @@ class LastFmProvider(TopSongsProvider):
         self._max_retries = max_retries
         self._retry_backoff_seconds = retry_backoff_seconds
         self._max_tracks = max_tracks
-        self._min_request_interval = min_request_interval
-        self._last_request_ts = 0.0
-        self._throttle_lock = threading.Lock()
+        self._throttle = Throttle(min_request_interval)
         # One pooled client per run: httpx.Client is thread-safe and reuses
         # keep-alive connections across requests instead of dialing each time.
         self._client = httpx.Client(timeout=self._timeout_seconds)
@@ -88,19 +85,6 @@ class LastFmProvider(TopSongsProvider):
     def __exit__(self, exc_type, exc, tb) -> bool:
         self.close()
         return False
-
-    def _throttle(self) -> None:
-        # The whole body runs under the lock so concurrent callers see a
-        # consistent _last_request_ts; sleeping under the lock is intended —
-        # it makes the throttle a true global rate limiter across threads.
-        with self._throttle_lock:
-            if self._min_request_interval <= 0:
-                return
-            elapsed = time.monotonic() - self._last_request_ts
-            wait = self._min_request_interval - elapsed
-            if wait > 0:
-                time.sleep(wait)
-            self._last_request_ts = time.monotonic()
 
     @property
     def name(self) -> str:
@@ -263,42 +247,28 @@ class LastFmProvider(TopSongsProvider):
         return entries
 
     def _request_json(self, params: dict[str, str], artist_name: str) -> dict:
-        last_error: Exception | None = None
-        for attempt in range(self._max_retries + 1):
-            try:
-                self._throttle()
-                response = self._client.get(self.base_url, params=params)
-                if response.status_code == 429:
-                    raise LastFmRateLimitError(f"artist={artist_name} message=http_429")
-                response.raise_for_status()
-                _validate_raw_response_prefix(response.text, artist_name)
-                return response.json()
-            except LastFmRateLimitError:
-                raise
-            except (
-                httpx.TimeoutException,
-                httpx.NetworkError,
-                httpx.RemoteProtocolError,
-                httpx.HTTPStatusError,
-            ) as exc:
-                last_error = exc
-                should_retry = attempt < self._max_retries and _is_retryable_http_error(exc)
-                logger.warning(
-                    "provider=lastfm artist=%s attempt=%s retry=%s error=%s",
-                    sanitize_untrusted_text(artist_name),
-                    attempt + 1,
-                    should_retry,
-                    exc,
-                )
-                if not should_retry:
-                    break
-                time.sleep(self._retry_backoff_seconds * (attempt + 1))
+        def send() -> httpx.Response:
+            self._throttle.wait()
+            response = self._client.get(self.base_url, params=params)
+            response.raise_for_status()
+            return response
 
-        raise LastFmError(
-            f"artist={sanitize_untrusted_text(artist_name)} "
-            f"message=request_failed error={last_error}"
-        )
-
+        try:
+            response = send_with_retries(
+                send,
+                max_retries=self._max_retries,
+                backoff_seconds=self._retry_backoff_seconds,
+                log_context=f"provider=lastfm artist={sanitize_untrusted_text(artist_name)}",
+            )
+        except REQUEST_ERRORS as exc:
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+                raise LastFmRateLimitError(f"artist={artist_name} message=http_429") from exc
+            raise LastFmError(
+                f"artist={sanitize_untrusted_text(artist_name)} "
+                f"message=request_failed error={exc}"
+            ) from exc
+        _validate_raw_response_prefix(response.text, artist_name)
+        return response.json()
 
 def _raise_for_payload_error(payload: dict, artist_name: str) -> None:
     if "error" not in payload:
@@ -341,18 +311,6 @@ def _to_int(value: object) -> int | None:
         return int(str(value))
     except ValueError:
         return None
-
-
-def _is_retryable_http_error(exc: Exception) -> bool:
-    if isinstance(
-        exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
-    ):
-        # RemoteProtocolError surfaces when a pooled keep-alive connection was
-        # closed server-side while idle; the retry dials a fresh connection.
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
-    return False
 
 
 def _validate_raw_response_prefix(raw_text: str, artist_name: str) -> None:

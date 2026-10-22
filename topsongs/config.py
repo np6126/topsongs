@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from .ownership import LIVE_TAG
 
 CsvList = Annotated[list[str], NoDecode]
 
@@ -15,7 +17,10 @@ CsvList = Annotated[list[str], NoDecode]
 _ENV_FILE = Path(__file__).resolve().parent.parent / "appdata" / ".env"
 
 
-class Settings(BaseSettings):
+class LanguageSettings(BaseSettings):
+    """The language alone, readable before the rest is configured: the CLIs
+    need it for their --help."""
+
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,
         env_file_encoding="utf-8",
@@ -23,6 +28,13 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
     )
 
+    # Every text a person reads: CLI output and help, the dashboard, and what
+    # live playlists show in Jellyfin. Jellyfin keeps no display language per
+    # user, so it is one language for all. Logs stay English.
+    language: Literal["de", "en"] = Field(default="en", alias="TOPSONGS_LANGUAGE")
+
+
+class Settings(LanguageSettings):
     jellyfin_url: str = Field(alias="JELLYFIN_URL")
     jellyfin_api_key: str = Field(alias="JELLYFIN_API_KEY")
     lastfm_api_key: str = Field(alias="LASTFM_API_KEY")
@@ -40,14 +52,16 @@ class Settings(BaseSettings):
     personalization_weight: float = Field(default=0.6, alias="PERSONALIZATION_WEIGHT")
     # Unset (or empty, via env_ignore_empty) means no bonus.
     recency_bonus: float | None = Field(default=None, alias="RECENCY_BONUS")
-    playlist_name_prefix: str = Field(default="Top Songs - ", alias="PLAYLIST_NAME_PREFIX")
-    # Opt-in: identify managed playlists by an in-band Jellyfin tag instead of
-    # the name prefix, which lets playlist names be bare (no prefix). Default
-    # off keeps the prefix path byte-for-byte unchanged.
-    playlist_tag_managed: bool = Field(default=False, alias="PLAYLIST_TAG_MANAGED")
+    # Only how the names read; the tag marks a playlist as the nightly run's.
+    playlist_name_prefix: str = Field(default="", alias="PLAYLIST_NAME_PREFIX")
     playlist_managed_tag: str = Field(default="topsongs", alias="PLAYLIST_MANAGED_TAG")
     append_unmatched_songs: bool = Field(default=True, alias="APPEND_UNMATCHED_SONGS")
     dry_run: bool = Field(default=False, alias="DRY_RUN")
+
+    # Live playlists from setlist.fm, created on request only. Without a key
+    # the feature is off: the CLI refuses and the dashboard hides its view.
+    setlistfm_api_key: str | None = Field(default=None, alias="SETLISTFM_API_KEY")
+    live_playlist_prefix: str = Field(default="Live - ", alias="LIVE_PLAYLIST_PREFIX")
 
     artist_allowlist: CsvList = Field(default_factory=list, alias="ARTIST_ALLOWLIST")
     artist_denylist: CsvList = Field(default_factory=list, alias="ARTIST_DENYLIST")
@@ -97,3 +111,10 @@ class Settings(BaseSettings):
     @classmethod
     def clamp_min_request_interval(cls, value: float) -> float:
         return max(0.0, value)
+
+    @field_validator("playlist_managed_tag")
+    @classmethod
+    def managed_tag_is_not_live_tag(cls, value: str) -> str:
+        if value == LIVE_TAG:
+            raise ValueError(f"PLAYLIST_MANAGED_TAG must not be '{LIVE_TAG}' (live playlists)")
+        return value
