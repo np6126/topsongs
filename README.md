@@ -15,7 +15,7 @@ A Jellyfin music library knows your artists but has no "best of this artist" pla
 
 ## Highlights
 
-- **Non-destructive.** `topsongs` only creates and deletes playlists. It never downloads music, modifies tracks, tags, files, or albums — your library is left exactly as it was.
+- **Non-destructive.** `topsongs` only works on playlists: it creates, tags and deletes its own, and renames them only when you prune. It never downloads music or changes tracks, their metadata, files, or albums — your library is left exactly as it was.
 - **Scoped, predictable cleanup.** It marks every playlist it creates with a Jellyfin tag and only ever replaces or deletes tagged ones. Everything else in Jellyfin — including playlists you made by hand, even under the same name — is invisible to it.
 - **Safe to preview.** `DRY_RUN=true` runs a full planning pass and logs every action it would take, while writing nothing to Jellyfin.
 - **Failure isolation.** One artist's failure does not abort the rest of the run, and the failed artist's existing playlist is kept — a transient Last.fm hiccup never costs you data.
@@ -69,14 +69,14 @@ docker compose logs -f app
 
 The container also serves a web dashboard on port `8080` (the `appdata/docker-compose.yml` example publishes it). Open `http://<host>:8080` and you get every topsongs action in one place:
 
-- **Dashboard** — the last run's status and counts, the next scheduled run, the run-lock state, and Jellyfin reachability at a glance.
+- **Dashboard** — the last run's status and counts, the next scheduled run, the run-lock state, the tag that marks the playlists, and Jellyfin reachability at a glance.
 - **Run** — trigger a playlist refresh (with an optional dry run) and watch the logs stream live; it is the same job cron runs nightly, and the run lock still prevents overlap.
 - **Missing** — the [missing-songs gap report](#finding-missing-songs) rendered with per-album coverage bars.
 - **Live** — put together a [live playlist](#live-playlists): pick concerts with autocompleted filters, preview the song order, then create it for one, several or all users, or as one public playlist. Shown when `SETLISTFM_API_KEY` is set.
 - **Purge** and **Prune** — preview exactly what would be deleted, then execute behind a confirmation.
 - **Config** — the effective settings of the running container (secrets are redacted).
 
-It runs as a small FastAPI app started by the `topsongs-web` console script, in the same container as cron. The dashboard is unauthenticated by default, which is fine behind a reverse proxy or on a trusted network; set `TOPSONGS_WEB_TOKEN` to require that token (sent as a bearer token) on every API call. `TOPSONGS_WEB_HOST` and `TOPSONGS_WEB_PORT` change the bind address and port.
+It runs as a small FastAPI app started by the `topsongs-web` console script, in the same container as cron. The dashboard is unauthenticated by default, which is fine behind a reverse proxy or on a trusted network; set `TOPSONGS_WEB_TOKEN` to require that token (sent as a bearer token) on every API call. `TOPSONGS_WEB_HOST` and `TOPSONGS_WEB_PORT` change the bind address and port. The dashboard speaks English or German, following `TOPSONGS_LANGUAGE`.
 
 > [!WARNING]
 > The dashboard can delete playlists (purge/prune), create live playlists and trigger runs. Do not expose port `8080` to an untrusted network without setting `TOPSONGS_WEB_TOKEN` or putting an authenticating proxy in front of it.
@@ -144,6 +144,9 @@ CRON_SCHEDULE=0 3 * * *
 RUN_ON_STARTUP=false
 SETLISTFM_API_KEY=
 LIVE_PLAYLIST_PREFIX="Live - "
+TOPSONGS_WEB_HOST=0.0.0.0
+TOPSONGS_WEB_PORT=8080
+TOPSONGS_WEB_TOKEN=
 ```
 
 `JELLYFIN_URL`, `JELLYFIN_API_KEY`, and `LASTFM_API_KEY` are required; everything else has a working default.
@@ -296,6 +299,12 @@ topsongs-live --setlist https://www.setlist.fm/setlist/metallica/2026/olympiasta
 
 The dashboard's **Live** view does the same with a form: the artist field suggests library artists by the start of their name, the filters autocomplete from the artist's last concerts, and the preview updates as you pick concerts and the minimum share. Below the preview you pick the users, or switch on *public* for one playlist everyone sees; the browser remembers the users you picked last.
 
+<div align="center">
+<img src="docs/screenshot-live.png" alt="Live view: concerts from setlist.fm, a mix preview with play counts and library matches, and the users to create the playlist for" width="80%">
+<br>
+<sub><em>A mix of three concerts, one per venue: songs played at most of them come first.</em></sub>
+</div>
+
 The artist must be in the library; its songs are matched against the user's tracks the same way the nightly run matches Last.fm's, and songs missing from the library are listed but skipped. Each playlist's description links the setlist.fm pages it was built from. setlist.fm allows about two requests a second and 1,440 a day for a standard key; `topsongs` spaces its requests half a second apart and keeps answers for ten minutes, as the setlist.fm API terms only allow short-term caching.
 
 In a Docker Compose deployment, run it inside the container with the `appdata/topsongs-live` wrapper, which forwards all arguments.
@@ -353,7 +362,7 @@ The console entry points are `topsongs` (also `run-topsongs`) for a playlist run
 
 ## Runtime files and logs
 
-Docker Compose mounts `appdata/state` to `/app/state`. The state directory holds the run summary, the lockfile, and the `topsongs-missing` discography cache.
+Docker Compose mounts `appdata/state` to `/app/state`. The state directory holds the run summary, the lockfile, the `topsongs-missing` discography cache, and the library's artist names for the dashboard's autocomplete (`artists_cache.json`, refreshed hourly).
 
 **Run summary.** Each playlist run writes a compact summary to `STATE_DIR/last_run.txt` with start and finish times, user/artist/playlist/failure counts, and two local-track counts: `unmatched_local_track_count` (tracks the provider's top list does not cover) and `duplicate_local_track_count` (tracks dropped because an identically-titled copy is already included; distinct editions such as live or remaster versions are kept as their own entries).
 

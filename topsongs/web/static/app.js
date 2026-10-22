@@ -296,7 +296,10 @@ async function runMissing() {
   let data;
   try { data = await post("/api/missing", payload); } catch (e) { body.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; return; }
   body.innerHTML = "";
-  const hdr = el("p", "muted", t("User: <b>{user}</b> · {count} artists checked", { user: esc(data.user), count: data.gaps.length }));
+  const checked = data.gaps.length === 1
+    ? t("User: <b>{user}</b> · 1 artist checked", { user: esc(data.user) })
+    : t("User: <b>{user}</b> · {count} artists checked", { user: esc(data.user), count: data.gaps.length });
+  const hdr = el("p", "muted", checked);
   body.appendChild(hdr);
   if (data.total) body.appendChild(gapCard(data.total, t("Total"), true));
   for (const g of data.gaps) body.appendChild(gapCard(g, null, false));

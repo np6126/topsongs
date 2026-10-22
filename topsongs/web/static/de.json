@@ -84,6 +84,7 @@
   "Run ended (code {code})": "Run beendet (code {code})",
 
   "Asking Last.fm… (may take a while)": "Frage Last.fm ab… (kann dauern)",
+  "User: <b>{user}</b> · 1 artist checked": "Benutzer: <b>{user}</b> · 1 Künstler geprüft",
   "User: <b>{user}</b> · {count} artists checked": "Benutzer: <b>{user}</b> · {count} Künstler geprüft",
   "Total": "Gesamt",
   "{count} artists": "{count} Künstler",
