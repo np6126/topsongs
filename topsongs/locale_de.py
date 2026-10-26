@@ -119,7 +119,9 @@ GERMAN: dict[str, str] = {
     "Create the playlist? [y/N] ": "Playlist anlegen? [j/N] ",
     "Cancelled, nothing created.": "Abgebrochen, nichts angelegt.",
     "Created:": "Angelegt:",
-    "{name} with {count} songs for {user}.": "{name} mit {count} Songs für {user}.",
+    "{name} with {songs} for {user}.": "{name} mit {songs} für {user}.",
+    "{count} song": "{count} Song",
+    "{count} songs": "{count} Songs",
     "setlist.fm has no matching concerts by {artist}.": (
         "setlist.fm hat keine passenden Konzerte von {artist}."
     ),
@@ -128,7 +130,7 @@ GERMAN: dict[str, str] = {
     "Date": "Datum",
     "Country": "Land",
     "none yet": "noch keine",
-    "1 concert": "1 Konzert",
+    "{count} concert": "{count} Konzert",
     "{count} concerts": "{count} Konzerte",
     "played": "gespielt",
     "Library": "Bibliothek",
@@ -137,6 +139,9 @@ GERMAN: dict[str, str] = {
     "✗ missing": "✗ fehlt",
     "Played at fewer than {share} % of the concerts: {songs}": (
         "Seltener als {share} % der Konzerte: {songs}"
+    ),
+    "{matched} of {total} song in the library. Name: {name}": (
+        "{matched} von {total} Song in der Bibliothek. Name: {name}"
     ),
     "{matched} of {total} songs in the library. Name: {name}": (
         "{matched} von {total} Songs in der Bibliothek. Name: {name}"
@@ -162,12 +167,16 @@ GERMAN: dict[str, str] = {
     "Last.fm error: {error}": "Last.fm-Fehler: {error}",
     "Could not load the artists:": "Künstler konnten nicht geladen werden:",
     "No artists to check.": "Keine Künstler zu prüfen.",
+    "Checking {count} artist for user {user} (source: Last.fm)…": (
+        "Prüfe {count} Künstler für Benutzer {user} (Quelle: Last.fm)…"
+    ),
     "Checking {count} artists for user {user} (source: Last.fm)…": (
         "Prüfe {count} Künstler für Benutzer {user} (Quelle: Last.fm)…"
     ),
     "no albums found on Last.fm": "keine Alben auf Last.fm gefunden",
     "albums": "Alben",
     "tracks": "Tracks",
+    "artist": "Künstler",
     "artists": "Künstler",
     "albums complete": "Alben komplett",
     "Total": "Gesamt",
@@ -204,6 +213,9 @@ GERMAN: dict[str, str] = {
     "Could not load the playlists of {user}, skipped:": (
         "Playlists für '{user}' nicht ladbar, übersprungen:"
     ),
+    "{count} playlist will be deleted irrevocably.": (
+        "{count} Playlist wird unwiderruflich gelöscht."
+    ),
     "{count} playlists will be deleted irrevocably.": (
         "{count} Playlists werden unwiderruflich gelöscht."
     ),
@@ -212,9 +224,11 @@ GERMAN: dict[str, str] = {
         "Kein --keep angegeben — das würde ALLE Playlists löschen."
     ),
     "Aborted.": "Abbruch.",
-    "{users} users, {count} playlists (unique by id).": (
-        "{users} Benutzer, {count} Playlists (eindeutig nach id)."
-    ),
+    "{users}, {playlists} (unique by id).": "{users}, {playlists} (eindeutig nach id).",
+    "{count} user": "{count} Benutzer",
+    "{count} users": "{count} Benutzer",
+    "{count} playlist": "{count} Playlist",
+    "{count} playlists": "{count} Playlists",
     "KEEP ({count}):": "BEHALTEN ({count}):",
     "already fine": "schon ok",
     "PROTECTED ({count}):": "GESCHÜTZT ({count}):",
@@ -228,9 +242,10 @@ GERMAN: dict[str, str] = {
     "Nothing to do.": "Nichts zu tun.",
     "Cancelled. Nothing changed.": "Abgebrochen. Nichts verändert.",
     "{renamed} renamed, {deleted} deleted": "{renamed} umbenannt, {deleted} gelöscht",
-    "{rename} rename errors, {delete} delete errors": (
-        "{rename} rename-Fehler, {delete} delete-Fehler"
-    ),
+    "{count} rename error": "{count} rename-Fehler",
+    "{count} rename errors": "{count} rename-Fehler",
+    "{count} delete error": "{count} delete-Fehler",
+    "{count} delete errors": "{count} delete-Fehler",
     "{count} kept.": "{count} behalten.",
     "Could not rename {name}:": "Umbenennen fehlgeschlagen für '{name}':",
     "Could not delete {name}:": "Löschen fehlgeschlagen für '{name}':",
@@ -251,8 +266,11 @@ GERMAN: dict[str, str] = {
         "Prefix ist leer — ein Purge würde ALLE Playlists löschen."
     ),
     "No playlists with {selection} found.": "Keine Playlists mit {selection} gefunden.",
-    "Found {count} playlists with {selection} across {users} users.": (
-        "Gefunden: {count} Playlists mit {selection} über {users} Benutzer."
+    "Found {playlists} with {selection} across {users}.": (
+        "Gefunden: {playlists} mit {selection} über {users}."
+    ),
+    "{count} playlist would be deleted. Nothing was changed.": (
+        "{count} Playlist würde gelöscht. Nichts wurde verändert."
     ),
     "{count} playlists would be deleted. Nothing was changed.": (
         "{count} Playlists würden gelöscht. Nichts wurde verändert."

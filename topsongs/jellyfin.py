@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -12,6 +13,7 @@ from .models import (
     JellyfinTrack,
     JellyfinUser,
     JellyfinUserPolicy,
+    PlaybackEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,24 @@ class JellyfinClient:
             if item.get("Id") and item.get("Name")
         ]
 
+    def get_audio_playback_events(self) -> list[PlaybackEvent]:
+        """Audio playback starts and stops from the activity log (needs an admin API key)."""
+        # The log holds tens of thousands of entries, so page in bigger steps.
+        entries = self._get_all_items(
+            "/System/ActivityLog/Entries", params={"hasUserId": "true"}, page_size=5000
+        )
+        return [
+            PlaybackEvent(
+                user_id=entry["UserId"],
+                item_id=entry["ItemId"],
+                started=entry["Type"] == "AudioPlayback",
+                at=datetime.fromisoformat(entry["Date"]),
+            )
+            for entry in entries
+            if entry.get("Type") in ("AudioPlayback", "AudioPlaybackStopped")
+            and entry.get("ItemId")
+        ]
+
     def get_playlists_for_user(
         self, user_id: str, media_types: str | None = "Audio"
     ) -> list[JellyfinPlaylist]:
@@ -178,8 +198,9 @@ class JellyfinClient:
         dto["Overview"] = overview
         self._post_json(f"/Items/{playlist_id}", dto)
 
-    def _get_all_items(self, path: str, params: dict[str, str]) -> list[dict]:
-        page_size = 500
+    def _get_all_items(
+        self, path: str, params: dict[str, str], page_size: int = 500
+    ) -> list[dict]:
         start_index = 0
         all_items: list[dict] = []
         while True:

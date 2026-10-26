@@ -1,7 +1,11 @@
 import itertools
 import threading
 import unittest
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
+
+import fakes
 
 from topsongs.filters import LibraryPathFilter
 from topsongs.models import (
@@ -10,6 +14,7 @@ from topsongs.models import (
     JellyfinTrack,
     JellyfinUser,
     JellyfinUserPolicy,
+    PlaybackEvent,
     ProviderTrack,
 )
 from topsongs.planner import Planner
@@ -890,6 +895,57 @@ class LibraryPathFilterTests(unittest.TestCase):
 
         self.assertEqual(artist_plan.matched_tracks[0].jellyfin_item_id, "11")
         self.assertEqual(artist_plan.playlist_plan.planned_item_ids[0], "11")
+
+    def test_skipped_plays_do_not_count(self) -> None:
+        """song11, the Last.fm bottom track, has 3 plays that were all skips."""
+
+        class PersonalizedSettings(SettingsStub):
+            personalization_weight = 0.6
+
+        jellyfin = fakes.JellyfinStub(
+            users=[fakes.user("u1")],
+            artists=[JellyfinArtist(id="a1", name="Powerwolf")],
+            tracks=[
+                JellyfinTrack(
+                    id=str(index),
+                    name=f"song{index}",
+                    path=f"/music/song{index}.flac",
+                    play_count=3 if index == 11 else 0,
+                )
+                for index in range(1, 12)
+            ],
+        )
+        start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        # Each start of song11 is cut short by the next start 5 seconds later.
+        jellyfin.get_audio_playback_events = lambda: [
+            PlaybackEvent(
+                user_id="u1", item_id=item_id, started=True, at=start + timedelta(seconds=second)
+            )
+            for second, item_id in ((0, "11"), (5, "11"), (10, "11"), (15, "1"))
+        ]
+        provider = MagicMock()
+        provider.name = "lastfm"
+        provider.get_top_tracks.return_value = [
+            ProviderTrack(title=f"song{index}", rank=index) for index in range(1, 12)
+        ]
+        planner = Planner(PersonalizedSettings(), jellyfin=jellyfin, provider=provider)
+
+        matches = planner.run().users[0].artists[0].matched_tracks
+
+        self.assertEqual(matches[0].jellyfin_item_id, "1")
+        self.assertEqual(matches[-1].jellyfin_item_id, "11")
+        self.assertEqual(matches[-1].play_count, 0)
+
+    def test_no_skips_when_the_activity_log_cannot_be_read(self) -> None:
+        class PersonalizedSettings(SettingsStub):
+            personalization_weight = 0.6
+
+        jellyfin = MagicMock()
+        jellyfin.get_audio_playback_events.side_effect = RuntimeError("403 Forbidden")
+        planner = Planner(PersonalizedSettings(), jellyfin=jellyfin, provider=None)
+
+        with self.assertLogs("topsongs.planner", level="WARNING"):
+            self.assertEqual(planner._load_skips(), Counter())
 
 
 class ConcurrencyPlannerTests(unittest.TestCase):

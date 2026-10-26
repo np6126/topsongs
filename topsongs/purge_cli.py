@@ -23,7 +23,7 @@ from rich.markup import escape
 
 from . import i18n
 from .config import Settings
-from .i18n import t
+from .i18n import t, tn
 from .jellyfin import JellyfinClient
 from .logging_setup import configure_logging
 from .models import JellyfinPlaylist, JellyfinUser
@@ -127,9 +127,12 @@ def _collect_managed_playlists(
 
 
 def _confirm(console: Console, count: int) -> bool:
-    console.print(
-        f"\n[bold red]{t('{count} playlists will be deleted irrevocably.', count=count)}[/]"
+    warning = tn(
+        "{count} playlist will be deleted irrevocably.",
+        "{count} playlists will be deleted irrevocably.",
+        count,
     )
+    console.print(f"\n[bold red]{warning}[/]")
     try:
         answer = input(t("Type 'yes' to confirm: ")).strip().lower()
     except EOFError:
@@ -216,10 +219,10 @@ def _purge(
     console.print(
         "[dim]"
         + t(
-            "Found {count} playlists with {selection} across {users} users.",
-            count=len(playlists),
+            "Found {playlists} with {selection} across {users}.",
+            playlists=tn("{count} playlist", "{count} playlists", len(playlists)),
             selection=escape(described),
-            users=len(users),
+            users=tn("{count} user", "{count} users", len(users)),
         )
         + "[/]"
     )
@@ -231,7 +234,11 @@ def _purge(
     if args.dry_run or settings.dry_run:
         console.print(
             f"\n[yellow]{t('Dry run:')}[/] "
-            + t("{count} playlists would be deleted. Nothing was changed.", count=len(playlists))
+            + tn(
+                "{count} playlist would be deleted. Nothing was changed.",
+                "{count} playlists would be deleted. Nothing was changed.",
+                len(playlists),
+            )
         )
         return 0
 

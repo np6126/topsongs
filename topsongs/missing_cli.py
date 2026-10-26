@@ -21,7 +21,7 @@ from . import i18n
 from .config import Settings
 from .discography import DiscographyCache, compute_artist_gap
 from .filters import NameFilter, UserFilter
-from .i18n import t
+from .i18n import t, tn
 from .jellyfin import JellyfinClient
 from .logging_setup import configure_logging
 from .missing_report import render_artist_gap, render_grand_total
@@ -200,9 +200,10 @@ def _scan(
         )
     )
 
-    checking = t(
+    checking = tn(
+        "Checking {count} artist for user {user} (source: Last.fm)…",
         "Checking {count} artists for user {user} (source: Last.fm)…",
-        count=len(artists),
+        len(artists),
         user=escape(user.name),
     )
     console.print(f"[dim]{checking}[/]\n")

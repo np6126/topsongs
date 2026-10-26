@@ -28,7 +28,7 @@ from rich.table import Table
 from . import i18n, live
 from .config import Settings
 from .filters import UserFilter
-from .i18n import t
+from .i18n import t, tn
 from .jellyfin import JellyfinClient
 from .logging_setup import configure_logging
 from .missing_cli import _select_user
@@ -273,9 +273,9 @@ def _run(args, settings: Settings, console: Console, jellyfin, setlistfm) -> int
         console.print(
             f"[green]{t('Created:')}[/] "
             + t(
-                "{name} with {count} songs for {user}.",
+                "{name} with {songs} for {user}.",
                 name=escape(created.name),
-                count=created.track_count,
+                songs=tn("{count} song", "{count} songs", created.track_count),
                 user=escape(recipient.name),
             )
         )
@@ -311,7 +311,7 @@ def _render_concert_list(console: Console, artist_name: str, concerts: list[Conc
 
 def _render_preview(console: Console, mix: LiveMix, name: str) -> None:
     total = len(mix.concerts)
-    count = t("1 concert") if total == 1 else t("{count} concerts", count=total)
+    count = tn("{count} concert", "{count} concerts", total)
     console.print(f"[bold]{escape(mix.artist_name)}[/] · {count}")
     for concert in mix.concerts:
         tour = f"  [dim]({escape(concert.tour)})[/]" if concert.tour else ""
@@ -347,8 +347,10 @@ def _render_preview(console: Console, mix: LiveMix, name: str) -> None:
         console.print(f"[dim]{below}[/]")
     console.print(
         "\n"
-        + t(
+        + tn(
+            "{matched} of {total} song in the library. Name: {name}",
             "{matched} of {total} songs in the library. Name: {name}",
+            len(mix.songs),
             matched=len(mix.matched),
             total=len(mix.songs),
             name=f"[bold]{escape(name)}[/]",

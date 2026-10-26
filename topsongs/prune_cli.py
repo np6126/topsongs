@@ -30,7 +30,7 @@ from rich.markup import escape
 
 from . import i18n
 from .config import Settings
-from .i18n import t
+from .i18n import t, tn
 from .jellyfin import JellyfinClient
 from .live import split_live
 from .logging_setup import configure_logging
@@ -143,7 +143,11 @@ def _collect_playlists(
 def _confirm(console: Console, delete_count: int) -> bool:
     console.print(
         "\n[bold red]"
-        + t("{count} playlists will be deleted irrevocably.", count=delete_count)
+        + tn(
+            "{count} playlist will be deleted irrevocably.",
+            "{count} playlists will be deleted irrevocably.",
+            delete_count,
+        )
         + "[/]"
     )
     try:
@@ -199,9 +203,9 @@ def _prune(
     to_rename = [p for p in keepers if p.name != prefix + _base_name(p.name, prefix)]
 
     summary = t(
-        "{users} users, {count} playlists (unique by id).",
-        users=len(users),
-        count=len(playlists) + len(live),
+        "{users}, {playlists} (unique by id).",
+        users=tn("{count} user", "{count} users", len(users)),
+        playlists=tn("{count} playlist", "{count} playlists", len(playlists) + len(live)),
     )
     console.print(f"[dim]{summary}[/]")
     console.print(f"[bold]{t('KEEP ({count}):', count=len(keepers))}[/]")
@@ -259,10 +263,11 @@ def _prune(
     deleted, delete_failed = _delete_playlists(jellyfin, to_delete, console)
 
     changed = t("{renamed} renamed, {deleted} deleted", renamed=renamed, deleted=deleted)
-    errors = t(
-        "{rename} rename errors, {delete} delete errors",
-        rename=rename_failed,
-        delete=delete_failed,
+    errors = ", ".join(
+        [
+            tn("{count} rename error", "{count} rename errors", rename_failed),
+            tn("{count} delete error", "{count} delete errors", delete_failed),
+        ]
     )
     console.print(
         f"\n[green]{changed}[/], [red]{errors}[/], {t('{count} kept.', count=len(keepers))}"

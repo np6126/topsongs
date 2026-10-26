@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Skipped songs no longer rank higher. Jellyfin counts a play as soon as
+  playback starts, so every skip counted as a play. Each run now reads
+  Jellyfin's activity log and subtracts the playbacks that ended within 30
+  seconds from the play counts. If the log cannot be read, the run uses the
+  plain play counts.
+
+### Fixed
+- Counts of one read in the singular in the command-line output and the
+  dashboard, e.g. `1 playlist`, `1 user`, `1 day ago`, instead of `1
+  playlists`; German gets its singular forms too (`1 Playlist wird gelöscht`).
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
@@ -180,6 +194,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   also runnable as a plain Python CLI.
 - Allow/deny filters for artists, users, and library paths.
 
+[Unreleased]: https://github.com/np6126/topsongs/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/np6126/topsongs/releases/tag/v0.3.0
 [0.2.6]: https://github.com/np6126/topsongs/releases/tag/v0.2.6
 [0.2.5]: https://github.com/np6126/topsongs/releases/tag/v0.2.5

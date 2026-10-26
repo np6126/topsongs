@@ -43,6 +43,15 @@ class JellyfinTrack(BaseModel):
     is_favorite: bool = False
 
 
+class PlaybackEvent(BaseModel):
+    """An audio playback start or stop from Jellyfin's activity log."""
+
+    user_id: str
+    item_id: str
+    started: bool
+    at: datetime
+
+
 class JellyfinPlaylist(BaseModel):
     id: str
     name: str

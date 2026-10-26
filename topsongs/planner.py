@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 import unicodedata
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
@@ -12,6 +13,7 @@ from typing import NamedTuple
 from .config import Settings
 from .filters import LibraryPathFilter, NameFilter, UserFilter
 from .jellyfin import JellyfinClient
+from .listening import count_skips
 from .matcher import match_tracks
 from .models import (
     ArtistPlan,
@@ -80,11 +82,14 @@ class Planner:
         )
         self._provider_track_cache: dict[str, list[ProviderTrack] | Exception] = {}
         self._cache_lock = threading.Lock()
+        # Skipped plays per (user id, item id); loaded once per run().
+        self._skips: Counter[tuple[str, str]] = Counter()
 
     def run(self) -> RunReport:
         started_at = datetime.now(timezone.utc)
         users = self.jellyfin.get_users()
         targeted_users = [user for user in users if self._user_filter.matches(user)]
+        self._skips = self._load_skips()
         user_plans: list[UserPlan] = []
         total_artist_count = 0
         total_eligible_count = 0
@@ -136,6 +141,39 @@ class Planner:
             failed_artist_count=total_failed_artist_count,
             users=user_plans,
         )
+
+    def _load_skips(self) -> Counter[tuple[str, str]]:
+        """Read the skips from Jellyfin's activity log when play counts matter."""
+        if self.settings.personalization_weight <= 0.0:
+            return Counter()
+        try:
+            events = self.jellyfin.get_audio_playback_events()
+        except Exception as exc:
+            logger.warning("event=skips_unavailable fallback=play_count error=%s", exc)
+            return Counter()
+        skips = count_skips(events)
+        logger.info(
+            "event=skips_loaded playback_events=%s skips=%s", len(events), sum(skips.values())
+        )
+        return skips
+
+    def _discount_skips(
+        self, user: JellyfinUser, tracks: list[JellyfinTrack]
+    ) -> list[JellyfinTrack]:
+        """Subtract each track's skips from its play count.
+
+        Skips are subtracted rather than plays counted from the log, so tracks
+        keep the plays Jellyfin carried over when they were moved or renamed.
+        """
+        discounted = []
+        for track in tracks:
+            skipped = self._skips[(user.id, track.id)]
+            if skipped:
+                track = track.model_copy(
+                    update={"play_count": max(0, track.play_count - skipped)}
+                )
+            discounted.append(track)
+        return discounted
 
     @staticmethod
     def _failed_user_plan(user: JellyfinUser, exc: Exception) -> UserPlan:
@@ -401,10 +439,11 @@ class Planner:
         artist: JellyfinArtist,
         all_local_tracks: list[JellyfinTrack],
     ) -> _PreparedArtist:
-        """Filter the local tracks and decide eligibility (no I/O)."""
+        """Filter the local tracks, discount skips and decide eligibility (no I/O)."""
         path_filtered_tracks = self._library_path_filter.filter_tracks(all_local_tracks)
         local_tracks = self._filter_short_tracks(path_filtered_tracks)
         short_track_count = len(path_filtered_tracks) - len(local_tracks)
+        local_tracks = self._discount_skips(user, local_tracks)
         local_count = len(local_tracks)
         eligible = local_count > self.settings.min_tracks_per_artist
         plan = self._initial_artist_plan(artist.name, local_count, eligible)

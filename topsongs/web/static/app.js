@@ -16,10 +16,10 @@ let TOKEN = localStorage.getItem("topsongs_token") || "";
 let LANG = "en";
 let CATALOG = {};
 const translate = (msg) => CATALOG[msg] ?? msg;
-function t(msg, values) {
-  const template = translate(msg);
-  return values ? template.replace(/\{(\w+)\}/g, (m, key) => (key in values ? String(values[key]) : m)) : template;
-}
+const fill = (template, values) => values ? template.replace(/\{(\w+)\}/g, (m, key) => (key in values ? String(values[key]) : m)) : template;
+const t = (msg, values) => fill(translate(msg), values);
+// t() for a counted message: `one` when count is 1, else `other`; {count} is filled in.
+const tn = (one, other, count, values) => fill(translate(count === 1 ? one : other), { count, ...values });
 async function useLanguage(lang) {
   LANG = lang === "de" ? "de" : "en";
   document.documentElement.lang = LANG;
@@ -91,7 +91,7 @@ function relTime(iso) {
   if (s < 60) return t("{n} s ago", { n: s });
   if (s < 3600) return t("{n} min ago", { n: Math.round(s / 60) });
   if (s < 86400) return t("{n} h ago", { n: Math.round(s / 3600) });
-  return t("{n} days ago", { n: Math.round(s / 86400) });
+  return tn("{count} day ago", "{count} days ago", Math.round(s / 86400));
 }
 function fmtDuration(sec) {
   if (sec == null) return "—";
@@ -180,7 +180,7 @@ loaders.dashboard = loadDashboard;
 
 function updateHealth(j) {
   const box = $("#jelly-dot");
-  if (j && j.reachable) { box.className = "health ok"; $("#jelly-text").textContent = t("Jellyfin · {count} users", { count: j.user_count }); }
+  if (j && j.reachable) { box.className = "health ok"; $("#jelly-text").textContent = tn("Jellyfin · {count} user", "Jellyfin · {count} users", j.user_count); }
   else { box.className = "health bad"; $("#jelly-text").textContent = "Jellyfin offline"; }
 }
 
@@ -296,10 +296,8 @@ async function runMissing() {
   let data;
   try { data = await post("/api/missing", payload); } catch (e) { body.innerHTML = `<div class="empty err">${esc(e.message)}</div>`; return; }
   body.innerHTML = "";
-  const checked = data.gaps.length === 1
-    ? t("User: <b>{user}</b> · 1 artist checked", { user: esc(data.user) })
-    : t("User: <b>{user}</b> · {count} artists checked", { user: esc(data.user), count: data.gaps.length });
-  const hdr = el("p", "muted", checked);
+  const hdr = el("p", "muted", tn("User: <b>{user}</b> · {count} artist checked", "User: <b>{user}</b> · {count} artists checked",
+    data.gaps.length, { user: esc(data.user) }));
   body.appendChild(hdr);
   if (data.total) body.appendChild(gapCard(data.total, t("Total"), true));
   for (const g of data.gaps) body.appendChild(gapCard(g, null, false));
@@ -555,8 +553,8 @@ async function createLive(ids, name, btn) {
   try {
     const r = await post("/api/live/playlist", { artist: live.artist, users, public: live.public, setlist_ids: ids, min_share: live.minShare, name });
     for (const c of r.created) {
-      const values = { name: c.name, count: c.track_count, user: c.user };
-      toast(r.public ? t("Created: {name} ({count} songs, public, owned by {user})", values) : t("Created: {name} ({count} songs, for {user})", values), "ok");
+      const values = { name: c.name, songs: tn("{count} song", "{count} songs", c.track_count), user: c.user };
+      toast(r.public ? t("Created: {name} ({songs}, public, owned by {user})", values) : t("Created: {name} ({songs}, for {user})", values), "ok");
       if (c.warning) toast(c.warning, "err");
     }
     for (const f of r.failed) toast(`${f.user}: ${f.error}`, "err");
@@ -609,11 +607,11 @@ async function purgePreview() {
   const n = data.playlists.length;
   $("#purge-exec").disabled = n === 0;
   const block = el("div", "result-block glass");
-  block.innerHTML = `<h4>${t("Preview")} · ${esc(data.selection)} · ${t("{count} users", { count: data.user_count })}</h4>`;
+  block.innerHTML = `<h4>${t("Preview")} · ${esc(data.selection)} · ${tn("{count} user", "{count} users", data.user_count)}</h4>`;
   if (!n) { block.innerHTML += `<div class="muted">${t("No matching playlists.")}</div>`; body.innerHTML = ""; body.appendChild(block); return; }
   const list = el("div", "row-list");
   for (const p of data.playlists) list.appendChild(playlistRow(p));
-  block.appendChild(el("div", "muted", t('<span class="tag-del">{count} playlists</span> would be deleted.', { count: n })));
+  block.appendChild(el("div", "muted", tn('<span class="tag-del">{count} playlist</span> would be deleted.', '<span class="tag-del">{count} playlists</span> would be deleted.', n)));
   block.appendChild(list);
   body.innerHTML = ""; body.appendChild(block);
 }
@@ -622,7 +620,7 @@ async function purgeExec() {
   if (!(await confirmModal(t("Delete playlists?"), t("All playlists with {selection} will be deleted irrevocably.", { selection })))) return;
   try {
     const r = await post("/api/purge", { prefix: $("#purge-prefix").value.trim() || null });
-    toast(t("{deleted} deleted, {failed} errors", { deleted: r.deleted, failed: r.failed }), r.failed ? "err" : "ok");
+    toast(t("{deleted} deleted, {errors}", { deleted: r.deleted, errors: tn("{count} error", "{count} errors", r.failed) }), r.failed ? "err" : "ok");
     $("#purge-exec").disabled = true; purgePreview();
   } catch (e) { toast(e.message, "err"); }
 }

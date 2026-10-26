@@ -34,6 +34,11 @@ def t(message: str, **values: object) -> str:
     return template.format(**values) if values else template
 
 
+def tn(one: str, other: str, count: int, **values: object) -> str:
+    """t() for a counted message: `one` when count is 1, else `other`; {count} is filled in."""
+    return t(one if count == 1 else other, count=count, **values)
+
+
 def fmt_date(day: date | None) -> str:
     if day is None:
         return "—"

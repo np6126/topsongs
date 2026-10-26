@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from .i18n import t
+from .i18n import t, tn
 from .models import AlbumGap, ArtistGap
 
 _BAR_WIDTH = 10
@@ -105,7 +105,7 @@ def render_grand_total(console: Console, gaps: list[ArtistGap]) -> None:
 
     summary = Text.assemble(
         (f"{len(scanned)}", "bold"),
-        (f" {t('artists')} · ", "dim"),
+        (f" {tn('artist', 'artists', len(scanned))} · ", "dim"),
         (f"{complete_albums}/{total_albums}", "bold"),
         (f" {t('albums complete')} · ", "dim"),
         (f"{owned_tracks}/{total_tracks}", "bold"),

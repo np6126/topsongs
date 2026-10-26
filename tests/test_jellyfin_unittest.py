@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 from topsongs.jellyfin import JellyfinClient
 
@@ -134,6 +135,35 @@ class JellyfinClientTests(unittest.TestCase):
         self.assertEqual(tracks[1].play_count, 0)
         self.assertFalse(tracks[1].is_favorite)
         self.assertIsNone(tracks[1].year)
+
+    def test_get_audio_playback_events_reads_audio_entries_of_the_activity_log(self) -> None:
+        client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")
+        calls = []
+        client._get = lambda path, params: calls.append((path, params)) or {  # type: ignore[method-assign]
+            "Items": [
+                {"Type": "AudioPlaybackStopped", "ItemId": "t1", "UserId": "u1",
+                 "Date": "2026-10-25T16:50:26.9829069Z"},
+                {"Type": "AudioPlayback", "ItemId": "t1", "UserId": "u1",
+                 "Date": "2026-10-25T16:39:11.9387025Z"},
+                {"Type": "VideoPlayback", "ItemId": "v1", "UserId": "u1",
+                 "Date": "2026-10-25T16:00:00.0000000Z"},
+                {"Type": "SessionStarted", "UserId": "u1",
+                 "Date": "2026-10-25T15:00:00.0000000Z"},
+            ],
+            "TotalRecordCount": 4,
+        }
+
+        events = client.get_audio_playback_events()
+
+        self.assertEqual(calls[0][0], "/System/ActivityLog/Entries")
+        self.assertEqual(calls[0][1]["hasUserId"], "true")
+        self.assertEqual(
+            [(event.item_id, event.started) for event in events],
+            [("t1", False), ("t1", True)],
+        )
+        self.assertEqual(
+            events[0].at, datetime(2026, 10, 25, 16, 50, 26, 982906, tzinfo=timezone.utc)
+        )
 
     def test_delete_playlist_uses_item_endpoint(self) -> None:
         client = JellyfinClient(base_url="http://jellyfin:8096", api_key="token")

@@ -102,6 +102,8 @@ Playlists are built per Jellyfin user, so `topsongs` does not simply copy the La
 
 When `APPEND_UNMATCHED_SONGS` is enabled and `PERSONALIZATION_WEIGHT` is above `0.0`, the appended local tracks are ordered by play count as well.
 
+Skips do not count. Jellyfin raises a track's play count the moment playback starts, so a track skipped after two seconds gains a play. `topsongs` therefore reads Jellyfin's activity log, which records when each playback started and ended, and subtracts every playback that ended within 30 seconds. If the activity log cannot be read, the run uses the plain play counts and logs a warning. Skips that are no longer in the log, because the log was cleared or the track was moved or renamed since, stay counted.
+
 ### New releases
 
 Last.fm's top tracks and Jellyfin's play counts are both all-time totals, so a new album ranks low just because it has had little time to collect plays. `RECENCY_BONUS` adds a score bonus to a track released this year. The bonus fades to 2/3 for last year's releases and 1/3 for the year before, and older tracks get nothing. The release year is the track's year tag in Jellyfin; tracks without one get no bonus. Unset, empty or `0` means no bonus; `appdata/.env.example` sets `0.3`.
@@ -158,7 +160,7 @@ Characters invalid in filenames (`/ \ : * ? " < > |`) are replaced with `_` in t
 | Variable | Required | Default | Purpose |
 | --- | :---: | --- | --- |
 | `JELLYFIN_URL` | yes | none | Base URL for the Jellyfin server, for example `http://jellyfin:8096`. |
-| `JELLYFIN_API_KEY` | yes | none | Jellyfin API key used to read users/items and create/delete playlists. |
+| `JELLYFIN_API_KEY` | yes | none | Jellyfin API key used to read users, items and the activity log, and to create/delete playlists. |
 | `LASTFM_API_KEY` | yes | none | Last.fm API key used to fetch artist top tracks. |
 | `MIN_TRACKS_PER_ARTIST` | no | `10` | Artists must have more local tracks than this value to be processed. |
 | `MIN_TRACK_DURATION_SECONDS` | no | `60` | Local tracks shorter than this are excluded from matching and playlists. Set to `0` to disable duration filtering. |
